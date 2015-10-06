@@ -38,7 +38,7 @@ FILE(GLOB PROGSRCS "./*.cpp")
 FILE(GLOB PROGHDRS "./*.h")
 
 ADD_EXECUTABLE(${PROJECT_NAME} ${PROGSRCS} ${PROGHDRS})
-ADD_DEPENDENCIES(demo-stereo-odometry stereo_odometry)
+ADD_DEPENDENCIES(demo-stereo-odometry stereo-odometry)
 # NOTE: It seems crucial the order of the linking libs!! First, our lib, then MRPT ones
 TARGET_LINK_LIBRARIES(demo-stereo-odometry stereo-odometry )
 TARGET_LINK_LIBRARIES(demo-stereo-odometry ${MRPT_LIBS} ${OpenCV_LIBS})

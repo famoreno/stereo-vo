@@ -9,6 +9,10 @@ PROJECT(tests)
 #SET(MRPT_DONT_USE_DBG_LIBS 1) # For CMake "Debug" builds in Linux
 FIND_PACKAGE(MRPT REQUIRED base vision gui)
 
+if(POLICY CMP0037)
+	cmake_policy(SET CMP0037 OLD)  # Allow creating target named "test"
+endif()
+
 # -----------------------------
 # Add the "make test" target:
 # -----------------------------
@@ -48,7 +52,6 @@ ADD_DEPENDENCIES(test_libstereo-odometry        stereo-odometry)
 TARGET_LINK_LIBRARIES(test_libstereo-odometry   stereo-odometry)
 
 # Run it:
-GET_TARGET_PROPERTY(GENERATED_EXE test_libstereo-odometry LOCATION)
-ADD_CUSTOM_TARGET(run_tests_libstereo-odometry COMMAND "${GENERATED_EXE}" "${libstereo_odometry_SOURCE_DIR}")
+ADD_CUSTOM_TARGET(run_tests_libstereo-odometry COMMAND "$<TARGET_FILE:test_libstereo-odometry>" "${libstereo_odometry_SOURCE_DIR}")
 ADD_DEPENDENCIES(run_tests_libstereo-odometry test_libstereo-odometry)
 ADD_DEPENDENCIES(test run_tests_libstereo-odometry)
