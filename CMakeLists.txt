@@ -11,7 +11,7 @@
 #                     (University of Malaga)                              |
 #                                                Released under GNU GPL 3 |
 # ------------------------------------------------------------------------+
-PROJECT(rso-tools)
+PROJECT(stereo-vo)
 
 cmake_minimum_required(VERSION 2.4)
 
