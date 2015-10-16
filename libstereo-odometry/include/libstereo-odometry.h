@@ -348,7 +348,7 @@ namespace rso
 		struct TDetectParams
 		{
 			enum NMSMethod { nmsmStandard, nmsmAdaptive };	//!< Non-maximal suppression method: Standard or Adaptive
-		    enum TDMethod { dmORB, dmFAST_ORB, dmFASTER };	//!< Feature detection method: FASTER (not implemented), ORB or FAST+ORB
+		    enum TDMethod { dmORB, dmFAST_ORB, dmFASTER, dmKLT };	//!< Feature detection method: FASTER (not implemented), ORB or FAST+ORB
 
 			TDetectParams();
 			double		target_feats_per_pixel;		//!< Desired number of features per square pixel (Default: 10/1000)
