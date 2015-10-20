@@ -37,6 +37,27 @@ void CStereoOdometryEstimator::stage4_track(
 	size_t nTracked = 0; // number of tracked features    
 
 	// --------------------------------------------------------
+	// KLT METHOD (optical flow)
+	// --------------------------------------------------------
+	if( params_detect.detect_method == TDetectParams::dmKLT )
+	{
+		// left image only
+		cv::Mat first_im = prev_imgpair.left.pyr.images[0].getAs<IplImage>();
+		cv::Mat second_im = cur_imgpair.left.pyr.images[0].getAs<IplImage>();
+		
+		vector<cv::Point2f> prevPts, nextPts;
+		cv::Mat status, err;
+		cv::KeyPoint::convert(prev_imgpair.left.orb_feats,prevPts);
+		cv::calcOpticalFlowPyrLK(first_im, second_im, prevPts, nextPts, status, err);
+
+		const size_t num_tracked = cv::countNonZero(status);
+		if( num_tracked < threshold )
+		{
+			// compute new points
+		}
+	} // end
+
+	// --------------------------------------------------------
 	// ORB METHOD
 	// --------------------------------------------------------
 	if( params_detect.detect_method == TDetectParams::dmORB || params_detect.detect_method == TDetectParams::dmFAST_ORB )

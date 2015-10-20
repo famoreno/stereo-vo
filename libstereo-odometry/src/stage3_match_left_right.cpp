@@ -74,6 +74,69 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
     // Search for pairings:
     m_profiler.enter("stg3.find_pairings");
 
+	// ***********************************
+	// KLT method --> use SAD+Epipolar+X-constraint
+	// ***********************************
+	if( params_detect.detect_method == TDetectParams::dmKLT )
+	{
+		for( int fl = 0; fl < imgpair.left.orb_feats.size(); ++fl )
+		{
+			const vector<KeyPoint> & feats_left = imgpair.left.orb_feats;		// shortcut
+			for( int fr = 0; fr < imgpair.right.orb_feats.size(); ++fr )
+			{
+				const vector<KeyPoint> & feats_right = imgpair.right.orb_feats; // shortcut
+
+				// filter 0: break if we the right y-coord has passed the left one + disparity_th
+				// (assuming that left features are stored ordered from lower 'y' to higher 'y'
+				if( feats_right[fr].pt.y+params_lr_match.max_y_diff > feats_left[fl].pt.y)
+					break;
+
+				// filter 1: epipolar
+				if( mrpt::utils::abs_diff(feats_left[fl].pt.y,feats_right[fr].pt.y) > params_lr_match.max_y_diff )
+					continue;
+
+				// filter 2: disparity
+				const double disp = feats_left[fl].pt.x - feats_right[fr].pt.y;
+				if( disp < 1 || disp > params_lr_match.max_disparity )
+					continue;
+
+				// filter 3: SAD
+				uint8_t distance = 0;
+				for( uint8_t k = 0; k < desc_left.cols; ++k )
+				{
+					uint8_t x_or = desc_left.at<uint8_t>(fl,k) ^ desc_right.at<uint8_t>(fr,k);
+					uint8_t count;								// from : Wegner, Peter (1960), "A technique for counting ones in a binary computer", Communications of the ACM 3 (5): 322, doi:10.1145/367236.367286
+					for( count = 0; x_or; count++ )				// ...
+						x_or &= x_or-1;							// ...
+					distance += count;
+				}
+
+				if( distance > m_current_orb_th )
+					continue;
+
+				// filter 4: (opt) 1 to 1 robust match -- possible not too useful for stereo --> consider removal
+				if( params_lr_match.enable_robust_1to1_match )
+				{
+					// check if the right feature has been already assigned
+					if( distance < right_feat_assign[fr].second )
+					{
+						right_feat_assign[fr].first		= fl;
+						right_feat_assign[fr].second	= distance;
+					}
+				} // end-if
+				else
+				{
+					imgpair.orb_matches.push_back( DMatch(fl,fr,float(distance)) );
+					if( params_general.vo_use_matches_ids )
+						imgpair.orb_matches_ID.push_back( ++this->m_last_match_ID );
+				}
+			} // end-inner_for
+		} // end-outer_for
+	} // end-if-KLT
+
+	// ***********************************
+	// ORB method
+	// ***********************************
 	if( params_detect.detect_method == TDetectParams::dmORB || params_detect.detect_method == TDetectParams::dmFAST_ORB )
 	{
 #if USE_MATCHER == 0			// USE OPENCV'S BRUTE-FORCE MATCHER
@@ -251,6 +314,9 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 		// cout << "match: " << tLog.getMeanTime("match") << endl;
 #endif
 	} // end method orb feats
+	// ***********************************
+	// FASTER method
+	// ***********************************
 	else if( params_detect.detect_method == TDetectParams::dmFASTER )
     {
         const double minimum_KLT	    = params_detect.minimum_KLT;

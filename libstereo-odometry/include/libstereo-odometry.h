@@ -701,7 +701,11 @@ namespace rso
 		mrpt::vision::CStereoRectifyMap  m_stereo_rectifier;
 		std::vector<int> m_threshold;
 
-        /** Performs m_non_max_suppression for the detected features
+		/** Updates the row index matrix
+        */
+		void m_update_indexes( TImagePairData::img_data_t &data, size_t octave );
+        
+		/** Performs m_non_max_suppression for the detected features
         */
         void m_non_max_sup( TImagePairData::img_data_t &data, size_t octave );	// <-- useless?? consider remove
 		void m_adaptive_non_max_sup(

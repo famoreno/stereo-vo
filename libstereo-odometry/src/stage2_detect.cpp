@@ -40,6 +40,45 @@ CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 {
 }
 
+// -------------------------------------------------
+//	m_update_indexes (private)
+// [i/o]	data		<- image data containing the features
+// [i]		octave		<- number of the octave to process
+// -------------------------------------------------
+void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & data, size_t octave )
+{
+	// preliminary assertions
+	ASSERTDEBMSG_(octave < data.pyr_feats_index[octave].size(),"Input 'octave' value is larger than pyramid size")
+
+	vector<size_t>::iterator fromRow = data.pyr_feats_index[octave].begin(), toRow;
+
+    size_t feats_till_now = 0;
+    size_t current_row = 0;
+    for( size_t idx_feats = 0; idx_feats < data.pyr_feats[octave].size(); ++idx_feats)
+    {
+        const TSimpleFeature &feat = data.pyr_feats[octave][idx_feats];
+        if( idx_feats == 0 )
+        {
+            current_row = feat.pt.y;
+            toRow = data.pyr_feats_index[octave].begin()+current_row;
+            fill( fromRow, toRow, 0 );  // fill with zeros the initial part of the vector
+            fromRow = toRow;
+            continue;
+        }
+
+        if( feat.pt.y == int(current_row) )
+        {
+            ++feats_till_now;
+            continue;
+        }
+        current_row = feat.pt.y;
+
+        toRow = data.pyr_feats_index[octave].begin()+current_row;
+        fill( fromRow, toRow, ++feats_till_now );
+        fromRow = toRow;
+    } // end-for
+} // end-m_update_indexes
+
 void CStereoOdometryEstimator::m_adaptive_non_max_sup( 
 					const size_t				& num_out_points, 
 					const vector<KeyPoint>		& keypoints, 
@@ -112,16 +151,18 @@ void CStereoOdometryEstimator::m_adaptive_non_max_sup(
 	// cout << "fill output " << endl;
 	out_kp_rad.clear();
 	out_kp_rad.reserve( N );
-	// cout << "Radius: " << radius.size() << " and num_out_points: " << num_out_points << " actual: " << actual_num_out_points << endl;
-	// cout << "Descriptor size: " << descriptors.size() << endl;
-	// cout << "Keypoints size: " << keypoints.size() << endl;
-	// cout << "N: " << N << endl;
+	const bool use_desc = descriptors.size() != cv::Size(0,0);
+	if( use_desc )
+	{
+		ASSERTDEBMSG_( keypoints.size() == descriptors.rows, format("Keypoints and descriptors do not have the same size: %d vs %d",keypoints.size(),descriptors.rows ); )
+		out_kp_desc.reserve( N );
+	}
 	for( size_t i = 0; i < actual_num_out_points; i++ ) 
 	{
 		if( radius[sorted_indices[i]] > min_radius_th_2 ) 
 		{
 			out_kp_rad.push_back( keypoints[sorted_indices[i]] );
-			out_kp_desc.push_back( descriptors.row( sorted_indices[i] ) );
+			if( use_desc ) out_kp_desc.push_back( descriptors.row( sorted_indices[i] ) );
 		}
 	}
 	// cout << "done" << endl;
@@ -265,7 +306,10 @@ void CStereoOdometryEstimator::m_non_max_sup( TImagePairData::img_data_t &data, 
 //        mrpt::system::pause();
 
     // update indexes
-    vector<size_t>::iterator fromRow = data.pyr_feats_index[octave].begin(), toRow;
+	m_update_indexes(data,octave);
+
+#if 0
+	vector<size_t>::iterator fromRow = data.pyr_feats_index[octave].begin(), toRow;
 
     size_t feats_till_now = 0;
     size_t current_row = 0;
@@ -292,7 +336,7 @@ void CStereoOdometryEstimator::m_non_max_sup( TImagePairData::img_data_t &data, 
         fill( fromRow, toRow, ++feats_till_now );
         fromRow = toRow;
     }
-
+#endif
     /** /
     {
         FILE *fia = mrpt::system::os::fopen("fiafter.txt","wt");
@@ -336,8 +380,13 @@ void CStereoOdometryEstimator::m_non_max_sup(
 			
 	//prepare output
 	out_kp.clear();
-	out_kp.reserve( n_feats );
-	out_kp_desc.reserve( n_feats );
+	out_kp.reserve( n_feats );	const bool use_desc = descriptors.size() != cv::Size(0,0);
+	if( use_desc )
+	{
+		ASSERTDEBMSG_( keypoints.size() == descriptors.rows, format("Keypoints and descriptors do not have the same size: %d vs %d",keypoints.size(),descriptors.rows ); )
+		out_kp_desc.reserve( n_feats );
+	}
+
 
 	std::vector<size_t> sorted_indices(n_feats);
 	for( size_t i = 0; i < n_feats; i++ )  sorted_indices[i]=i;
@@ -380,7 +429,7 @@ void CStereoOdometryEstimator::m_non_max_sup(
 
 		// Add it to the output vector
 		out_kp.push_back( kp );
-		out_kp_desc.push_back( descriptors.row(idx) );
+		if( use_desc ) out_kp_desc.push_back( descriptors.row(idx) ); // only if descriptors are present
 		++c_feats;
 	} // end-while
 }
@@ -404,53 +453,52 @@ void CStereoOdometryEstimator::stage2_detect_features(
     img_data.pyr_feats_index.resize(nPyrs);
     img_data.pyr_feats_desc.resize(nPyrs);
 
-	if( params_detect.detect_method == TDetectParams::dmORB )
+	// Features and descriptors (if needed)
+	vector<KeyPoint> feats_vector;
+	Mat				 desc_aux;
+	Mat				 input_im = img_data.pyr.images[0].getAs<IplImage>();	// by now, only one level in the scale
+	
+	// ***********************************
+	// KLT method (use ORB feature vector, no descriptor)
+	// ***********************************
+	if( params_detect.detect_method == TDetectParams::dmKLT )
 	{
-        // ***********************************
-	    // ORB method
-	    // ***********************************
-        CImage & input_im = img_data.pyr.images[0];	// shortcut
-		const size_t n_feats_to_extract = params_detect.non_maximal_suppression ? 1.5*params_detect.orb_nfeats : params_detect.orb_nfeats; // if non-max-sup is ON extract more features to get approx the number of desired output feats.
-		
-		// detect points
-		// ORB orbDetector( n_feats_to_extract, 1.2, params_detect.orb_nlevels );	// user-defined number of feats, 'orb_nlevels' levels for pyramid, 1.2 distance between pyramid levels
-		ORB orbDetector( n_feats_to_extract, 1.2, params_detect.orb_nlevels, 
-			31 /*edgeThreshold*/, 
-			0 /*firstLevel*/,
-			2 /*WTA_K*/,
-			ORB::HARRIS_SCORE /*scoreType*/,
-			31 /*patchSize*/,
-			m_current_fast_th /*params_detect.initial_FAST_threshold*/ );
+		// detect Shi&Tomasi keypoints
+		goodFeaturesToTrack(
+			input_im,					// image
+			feats_vector,				// output feature vector
+			params_detect.orb_nfeats,	// number of features to detect
+			0.01,						// quality level
+			20);						// minimum distance
+		desc_aux = Mat();
+	}
+    // ***********************************
+	// ORB method
+	// ***********************************
+	else if( params_detect.detect_method == TDetectParams::dmORB )
+	{
+		const size_t n_feats_to_extract = 
+			params_detect.non_maximal_suppression ? 
+				1.5*params_detect.orb_nfeats : 
+				params_detect.orb_nfeats; // if non-max-sup is ON extract more features to get approx the number of desired output feats.
 
-        Mat img( input_im.getAs<IplImage>() );
+		// detect ORB keypoints and descriptors
+		ORB orbDetector( 
+			n_feats_to_extract,			// number of ORB features to extract
+			1.2,						// scale difference
+			params_detect.orb_nlevels,  // number of levels
+			31,							// edgeThreshold
+			0,							// firstLevel
+			2,							// WTA_K
+			ORB::HARRIS_SCORE,			// scoreType
+			31,							// patchSize
+			m_current_fast_th );		// fast threshold
 
-        // detect keypoints and desc
-		vector<KeyPoint> feat_vector;
-		Mat				 desc_aux;
-		orbDetector( img, Mat(), feat_vector, desc_aux );  // all the scales in the same call
-
-		// non-maximal suppression
-		if( params_detect.non_maximal_suppression )
-		{
-			if( params_detect.nmsMethod == TDetectParams::nmsmStandard )
-			{
-				const size_t imgH = input_im.getHeight();
-				const size_t imgW = input_im.getWidth();
-				this->m_non_max_sup( params_detect.orb_nfeats, feat_vector, desc_aux, img_data.orb_feats, img_data.orb_desc, imgH, imgW );
-			}
-			else if( params_detect.nmsMethod == TDetectParams::nmsmAdaptive )
-				this->m_adaptive_non_max_sup( params_detect.orb_nfeats, feat_vector, desc_aux, img_data.orb_feats, img_data.orb_desc );
-			else
-				THROW_EXCEPTION("	[sVO -- Stg2: Detect] Invalid non-maximal-suppression method." );
-		} // end-if-non-max-sup
-		else
-		{
-			feat_vector.swap(img_data.orb_feats);
-			img_data.orb_desc = desc_aux;					// this should copy just the header
-		}
-
+        // detect keypoints and descriptors
+		orbDetector( input_im, Mat(), feats_vector, desc_aux );  // all the scales in the same call
+	}
 #if 0
-		// perform subpixel
+		// perform subpixel (it seems to be too slow)
 		{
 			FILE *fo = mrpt::system::os::fopen("fbef.txt","wt");
 			for( vector<KeyPoint>::iterator it = img_data.orb_feats.begin(); it != img_data.orb_feats.end(); ++it )
@@ -485,44 +533,46 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			mrpt::system::os::fclose(fo);
 		}
 #endif
-
-		VERBOSE_LEVEL(2) << "	[sVO -- Stg2: Detect] Detected: " << img_data.orb_feats.size() << " feats" << endl;
-	}
+	// ***********************************
+	// FAST+ORB method
+	// ***********************************
 	else if( params_detect.detect_method == TDetectParams::dmFAST_ORB )
 	{
-		CImage & input_im = img_data.pyr.images[0];						// shortcut
-        Mat img( input_im.getAs<IplImage>() )/*image*/, desc_aux/*descriptors*/;
-		vector<KeyPoint> feat_vector;
-		cv::FastFeatureDetector(5).detect( img, feat_vector );			// detect keypoints
-		ORB().operator()(img, Mat(), feat_vector, desc_aux, true );		// extract descriptors
-
-		// non-maximal suppression
-		if( params_detect.non_maximal_suppression )
-		{
-			if( params_detect.nmsMethod == TDetectParams::nmsmStandard )
-			{
-				const size_t imgH = input_im.getHeight();
-				const size_t imgW = input_im.getWidth();
-				this->m_non_max_sup( params_detect.orb_nfeats, feat_vector, desc_aux, img_data.orb_feats, img_data.orb_desc, imgH, imgW );
-			}
-			else if( params_detect.nmsMethod == TDetectParams::nmsmAdaptive )
-				this->m_adaptive_non_max_sup( params_detect.orb_nfeats, feat_vector, desc_aux, img_data.orb_feats, img_data.orb_desc );
-			else
-				THROW_EXCEPTION("	[sVO -- Stg2: Detect] Invalid non-maximal-suppression method." );
-		} // end-if-non-max-sup
-		else
-		{
-			feat_vector.swap(img_data.orb_feats);
-			img_data.orb_desc = desc_aux;					// this should copy just the header
-		}
-		
-		VERBOSE_LEVEL(2) << "	[sVO -- Stg2: Detect] Detected: " << img_data.orb_feats.size() << " feats" << endl;
+		cv::FastFeatureDetector(5).detect( input_im, feats_vector );			// detect keypoints
+		ORB().operator()(input_im, Mat(), feats_vector, desc_aux, true );		// extract descriptors
 	}
+	else
+	    THROW_EXCEPTION("	[sVO -- Stg2: Detect] ERROR: Unknown detection method")
+
+	// ***********************************
+	// Non-maximal suppression
+	// ***********************************
+	if( params_detect.non_maximal_suppression )
+	{
+		if( params_detect.nmsMethod == TDetectParams::nmsmStandard )
+		{
+			const size_t imgH = input_im.rows;
+			const size_t imgW = input_im.cols;
+			this->m_non_max_sup( params_detect.orb_nfeats, feats_vector, desc_aux, img_data.orb_feats, img_data.orb_desc, imgH, imgW );
+		}
+		else if( params_detect.nmsMethod == TDetectParams::nmsmAdaptive )
+			this->m_adaptive_non_max_sup( params_detect.orb_nfeats, feats_vector, desc_aux, img_data.orb_feats, img_data.orb_desc );
+		else
+			THROW_EXCEPTION("	[sVO -- Stg2: Detect] Invalid non-maximal-suppression method." );
+	} // end-if-non-max-sup
+	else
+	{
+		feats_vector.swap(img_data.orb_feats);
+		img_data.orb_desc = desc_aux;					// this should copy just the header
+	}
+
+	VERBOSE_LEVEL(2) << "	[sVO -- Stg2: Detect] Detected: " << img_data.orb_feats.size() << " feats" << endl;
+#if 1
+	// ***********************************
+	// FASTER method (no descriptor)
+	// ***********************************
 	else if( params_detect.detect_method == TDetectParams::dmFASTER )
 	{
-	    // ***********************************
-	    // FASTER method
-	    // ***********************************
         // Use a dynamic threshold to maintain a target number of features per square pixel.
         if (m_threshold.size()!=nPyrs) m_threshold.assign(nPyrs, params_detect.initial_FAST_threshold);
 
@@ -547,7 +597,6 @@ void CStereoOdometryEstimator::stage2_detect_features(
                 &img_data.pyr_feats_index[octave] /* row-indexed list of features */
                 );
 
-//            cout << endl << "(" << octave << "): " << img_data.pyr_feats[octave].size() << endl;
             const size_t nFeats = img_data.pyr_feats[octave].size();
 
             // fill in the identifiers of the features
@@ -608,8 +657,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
             m_profiler.leave(sProfileName.c_str()); // end detect
         }
 	}
-    else
-        THROW_EXCEPTION("	[sVO -- Stg2: Detect] ERROR: Unknown detection method")
+#endif
 
 	if (params_gui.show_gui && params_gui.draw_all_raw_feats)
 	{
