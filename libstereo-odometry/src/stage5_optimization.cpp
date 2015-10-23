@@ -28,11 +28,11 @@ using namespace rso;
 
 // computes the jacobian of a set of variables
 void CStereoOdometryEstimator::m_pinhole_stereo_projection(
-                const vector<TPoint3D> &lmks,                           // [input]  the input 3D landmarks
-                const TStereoCamera &cam,                               // [input]  the stereo camera
-                const vector<double> &delta_pose,                       // [input]  the tested movement of the camera (w1,w2,w3,t1,t2,t3)
-                vector< pair<TPixelCoordf,TPixelCoordf> > &out_pixels,  // [output] the pixels of the landmarks in the (left & right) images
-                vector<Eigen::MatrixXd> &out_jacobian                   // [output] the jacobians of the projections vector<matrix4x6>
+                const vector<TPoint3D>				& lmks,             // [input]  the input 3D landmarks
+                const TStereoCamera					& cam,              // [input]  the stereo camera
+                const vector<double>				& delta_pose,       // [input]  the tested movement of the camera (w1,w2,w3,t1,t2,t3)
+                vector< pair<TPixelCoordf,TPixelCoordf> > & out_pixels, // [output] the pixels of the landmarks in the (left & right) images
+                vector<Eigen::MatrixXd>				& out_jacobian      // [output] the jacobians of the projections vector<matrix4x6>
                 )
 {
     const size_t nL = lmks.size();

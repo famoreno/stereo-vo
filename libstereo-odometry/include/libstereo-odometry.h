@@ -82,6 +82,15 @@ struct KpRadiusSorter : public std::binary_function<size_t,size_t,bool>
 	}
 };
 
+struct KpRowSorter : public std::binary_function<size_t,size_t,bool>
+{
+	const mrpt::vision::TSimpleFeatureList & m_data;
+	KpRowSorter( const mrpt::vision::TSimpleFeatureList & data ) : m_data( data ) { }
+	bool operator() (size_t k1, size_t k2 ) const {
+		return (m_data[k1].pt.y > m_data[k2].pt.y);
+	}
+};
+
 typedef struct t_change_in_pose_output {
 	mrpt::poses::CPose3D	change_in_pose;
 	std::vector<double>		out_residual;
@@ -701,7 +710,11 @@ namespace rso
 		mrpt::vision::CStereoRectifyMap  m_stereo_rectifier;
 		std::vector<int> m_threshold;
 
-        /** Performs m_non_max_suppression for the detected features
+        /** Updates the vector of 'row' indexes for a vector of keypoints
+        */
+		void m_update_indexes( TImagePairData::img_data_t & data, size_t octave, const vector<size_t> & sorted_indices = vector<size_t>() );
+
+		/** Performs m_non_max_suppression for the detected features
         */
         void m_non_max_sup( TImagePairData::img_data_t &data, size_t octave );	// <-- useless?? consider remove
 		void m_adaptive_non_max_sup(

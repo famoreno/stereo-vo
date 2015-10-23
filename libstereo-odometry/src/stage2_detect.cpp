@@ -40,6 +40,47 @@ CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 {
 }
 
+void CStereoOdometryEstimator::m_update_indexes( 
+						TImagePairData::img_data_t	& data,					// I/O	-- Structure with features and feature index vector (which is filled here)
+						size_t						  octave,				// I	-- Octave to process
+						const vector<size_t>		& sorted_indices )		// oI	-- Vector containing the order of the features to be processed (ordered by row)
+{
+	bool use_sorted_indices = sorted_indices.size() > 0;
+	if( use_sorted_indices )
+	{
+		ASSERT_(data.pyr_feats[octave].size() == sorted_indices.size() )
+	}
+
+	vector<size_t>::iterator fromRow = data.pyr_feats_index[octave].begin(), toRow;
+
+    size_t feats_till_now = 0;
+    size_t current_row = 0;
+    for( size_t idx_feats = 0; idx_feats < data.pyr_feats[octave].size(); ++idx_feats)
+    {
+		const size_t idx = use_sorted_indices ? sorted_indices[idx_feats] : idx_feats;
+        const TSimpleFeature &feat = data.pyr_feats[octave][idx];
+        if( idx_feats == 0 )
+        {
+            current_row = feat.pt.y;
+            toRow = data.pyr_feats_index[octave].begin()+current_row;
+            fill( fromRow, toRow, 0 );  // fill with zeros
+            fromRow = toRow;
+            continue;
+        }
+
+        if( feat.pt.y == int(current_row) )
+        {
+            ++feats_till_now;
+            continue;
+        }
+        current_row = feat.pt.y;
+
+        toRow = data.pyr_feats_index[octave].begin()+current_row;
+        fill( fromRow, toRow, ++feats_till_now );
+        fromRow = toRow;
+    }
+}
+
 void CStereoOdometryEstimator::m_adaptive_non_max_sup( 
 					const size_t				& num_out_points, 
 					const vector<KeyPoint>		& keypoints, 
@@ -264,34 +305,14 @@ void CStereoOdometryEstimator::m_non_max_sup( TImagePairData::img_data_t &data, 
 //         win_after.showImageAndPoints(data.pyr.images[octave],data.pyr_feats[octave]);
 //        mrpt::system::pause();
 
+	// order by row coordinate
+	const size_t N = data.pyr_feats[octave].size();
+	vector<size_t> sorted_indices( N );
+	for (size_t i=0;i<N;i++)  sorted_indices[i]=i;
+	std::sort( sorted_indices.begin(), sorted_indices.end(), KpRowSorter(data.pyr_feats[octave]) );
+
     // update indexes
-    vector<size_t>::iterator fromRow = data.pyr_feats_index[octave].begin(), toRow;
-
-    size_t feats_till_now = 0;
-    size_t current_row = 0;
-    for( size_t idx_feats = 0; idx_feats < data.pyr_feats[octave].size(); ++idx_feats)
-    {
-        const TSimpleFeature &feat = data.pyr_feats[octave][idx_feats];
-        if( idx_feats == 0 )
-        {
-            current_row = feat.pt.y;
-            toRow = data.pyr_feats_index[octave].begin()+current_row;
-            fill( fromRow, toRow, 0 );  // fill with zeros
-            fromRow = toRow;
-            continue;
-        }
-
-        if( feat.pt.y == int(current_row) )
-        {
-            ++feats_till_now;
-            continue;
-        }
-        current_row = feat.pt.y;
-
-        toRow = data.pyr_feats_index[octave].begin()+current_row;
-        fill( fromRow, toRow, ++feats_till_now );
-        fromRow = toRow;
-    }
+	m_update_indexes( data, octave, sorted_indices );
 
     /** /
     {
@@ -407,7 +428,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 	if( params_detect.detect_method == TDetectParams::dmORB )
 	{
         // ***********************************
-	    // ORB method
+	    // ORB method --> output feats are not ordered either by position nor by response
 	    // ***********************************
         CImage & input_im = img_data.pyr.images[0];	// shortcut
 		const size_t n_feats_to_extract = params_detect.non_maximal_suppression ? 1.5*params_detect.orb_nfeats : params_detect.orb_nfeats; // if non-max-sup is ON extract more features to get approx the number of desired output feats.
@@ -448,6 +469,10 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			feat_vector.swap(img_data.orb_feats);
 			img_data.orb_desc = desc_aux;					// this should copy just the header
 		}
+
+		FILE *f = mrpt::system::os::fopen("feats.txt","wt");
+		for(int i = 0; i < img_data.orb_feats.size(); ++i) mrpt::system::os::fprintf(f,"%.2f,%.2f,%.5f\n",img_data.orb_feats[i].pt.x,img_data.orb_feats[i].pt.y,img_data.orb_feats[i].response);
+		mrpt::system::os::fclose(f);
 
 #if 0
 		// perform subpixel

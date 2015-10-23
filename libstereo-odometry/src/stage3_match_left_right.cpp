@@ -19,7 +19,7 @@
    | along with this program.  If not, see <http://www.gnu.org/licenses/>.   |
    +-------------------------------------------------------------------------+ */
 
-#define USE_MATCHER 0			// 0 : Bruteforce -- 1 : Standard
+#define USE_MATCHER 0			// 0 : Bruteforce -- 1 : Standard with ORB descriptors -- 2 : SAD
 
 #include <libstereo-odometry.h>
 #include "internal_libstereo-odometry.h"
@@ -76,13 +76,15 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 
 	if( params_detect.detect_method == TDetectParams::dmORB || params_detect.detect_method == TDetectParams::dmFAST_ORB )
 	{
-#if USE_MATCHER == 0			// USE OPENCV'S BRUTE-FORCE MATCHER
+
+// USE OPENCV'S BRUTE-FORCE MATCHER
+#if USE_MATCHER == 0			
         // CTimeLogger tLog;
 		// tLog.enter("match");
 
 		// perform match
 	    cv::BFMatcher matcher(cv::NORM_HAMMING,false);
-        matcher.match( imgpair.left.orb_desc /*query*/, imgpair.right.orb_desc /*train*/, imgpair.orb_matches /* size of query*/);
+        matcher.match( imgpair.left.orb_desc /*query*/, imgpair.right.orb_desc /*train*/, imgpair.orb_matches /*size of query*/);
 
 		if( params_general.vo_debug )
 		{
@@ -174,7 +176,7 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 		// tLog.leave("match");
 		// cout << "match: " << tLog.getMeanTime("match") << endl;
 
-#elif USE_MATCHER == 1														// STANDARD MATCHING PROCESS: 1 by 1 with restrictions (possibly faster than BFMatcher)
+#elif USE_MATCHER == 1					// STANDARD MATCHING PROCESS: 1 by 1 with restrictions (possibly faster than BFMatcher)									
 		const Mat & desc_left					= imgpair.left.orb_desc;
 		const Mat & desc_right					= imgpair.right.orb_desc;
 		const vector<KeyPoint> & feats_left		= imgpair.left.orb_feats;
@@ -196,7 +198,7 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 
 				// filter 2: disparity
 				const double disp = feats_left[fl].pt.x - feats_right[fr].pt.y;
-				if( disp < 1 || disp > params_lr_match.max_disparity )
+				if( disp < 1 /*|| disp > params_lr_match.max_disparity*/ )
 					continue;
 
 				// filter 3: orb hamming distance
@@ -249,6 +251,131 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 
 		// tLog.leave("match");
 		// cout << "match: " << tLog.getMeanTime("match") << endl;
+#elif USE_MATCHER == 2	// Sum of Absolute Differences
+#define INVALID_IDX -1
+		const size_t octave = 0;
+		const vector<KeyPoint> & feats_left		= imgpair.left.orb_feats;
+		const vector<KeyPoint> & feats_right	= imgpair.right.orb_feats;
+		
+		// 121 robust stereo matching
+		const uint32_t MAX_D = std::numeric_limits<uint32_t>::max();
+		vector<int> left_matches_idxs( feats_left.size(), INVALID_IDX );									// for storing left-right associations
+		vector< pair<int,uint32_t> > right_feat_assign( feats_right.size(), make_pair(INVALID_IDX,MAX_D) );
+
+        // Get information from the images
+		const CImage imgL = imgpair.left.pyr.images[octave];
+        const CImage imgR = imgpair.right.pyr.images[octave];
+		const TImageSize max_pt( imgL.getWidth()-4-1, imgL.getHeight()-4-1 );
+
+        const unsigned char *img_data_L = imgL.get_unsafe(0,0);
+        const unsigned char *img_data_R = imgR.get_unsafe(0,0);
+        const size_t img_stride			= imgpair.left.pyr.images[octave].getRowStride();
+        ASSERTDEB_(img_stride == imgpair.right.pyr.images[octave].getRowStride())
+		
+		// Define parameters
+		const double minimum_ORB_response	= params_detect.minimum_KLT;
+        const double maximum_SAD			= params_lr_match.maximum_SAD;
+        const double max_SAD_ratio			= params_lr_match.max_SAD_ratio;
+		
+		FILE *f = mrpt::system::os::fopen("dist.txt","wt");
+
+		// Prepare output
+		imgpair.orb_matches.reserve( feats_left.size() );	// maximum number of matches: number of left features
+		const int max_disparity = static_cast<int>(imgL.getWidth()*0.7);
+		size_t idx_feats_L = 0;
+		for( vector<KeyPoint>::const_iterator featL = feats_left.begin(); featL != feats_left.end(); ++featL, ++idx_feats_L )
+		{
+			uint32_t minSAD_1, minSAD_2;
+            minSAD_1 = minSAD_2 = std::numeric_limits<uint32_t>::max();
+			size_t minSAD_idx = 0, idx_feats_R = 0;
+			for( vector<KeyPoint>::const_iterator featR = feats_right.begin(); featR != feats_right.end(); ++featR, ++idx_feats_R )
+			{
+				// filter 0: border and minimum response
+                if( featL->pt.x<3 || featR->pt.x<3 || featR->pt.y<3 || featR->pt.y<3 ||
+                    featL->pt.x>max_pt.x || featR->pt.x>max_pt.x || featL->pt.y>max_pt.y || featR->pt.y>max_pt.y )
+					continue;
+
+				//if( featL->response<minimum_ORB_response || featR->response<minimum_ORB_response )
+				//	continue;
+
+				// filter 1: epipolar
+				if( mrpt::utils::abs_diff(feats_left[idx_feats_L].pt.y,feats_right[idx_feats_R].pt.y) > params_lr_match.max_y_diff )
+					continue;
+
+				// filter 2: disparity
+				const double disp = feats_left[idx_feats_L].pt.x - feats_right[idx_feats_R].pt.y;
+				if( disp < 1 || disp > max_disparity )
+					continue;
+
+				// filter 3: SAD distance
+				const uint32_t distance = rso::compute_SAD8( img_data_L, img_data_R, img_stride, TPixelCoord(featL->pt.x,featL->pt.y), TPixelCoord(featR->pt.x,featR->pt.y) );
+				
+				mrpt::system::os::fprintf(f,"%.2f,%.2f,%.2f,%.2f,%d\n",featL->pt.x,featL->pt.y,featR->pt.x,featR->pt.y,distance);
+
+				if( distance < maximum_SAD )
+				{
+					if( distance < minSAD_1 )
+                    {
+						minSAD_2    = minSAD_1;
+                        minSAD_1    = distance;
+                        minSAD_idx  = idx_feats_R;
+                    }
+                    else if( distance < minSAD_2 )
+						minSAD_2 = distance;
+				} // end-if distance < maximum_SAD
+			} // end--right_for
+			
+			// Accept this only if the ratio between the SAD is below a threshold
+			const double SAD_ratio = 1.0*minSAD_1/minSAD_2;
+            if( SAD_ratio > max_SAD_ratio )	
+				continue;
+
+			// We've got a potential match
+			if( params_lr_match.enable_robust_1to1_match )
+			{
+				// check if the right feature has been already assigned
+				if( right_feat_assign[minSAD_idx].first == INVALID_IDX )
+				{
+					// set the new match
+					left_matches_idxs[idx_feats_L]			= minSAD_idx;
+					right_feat_assign[minSAD_idx].first		= idx_feats_L;		// will keep the **BEST** match
+					right_feat_assign[minSAD_idx].second	= minSAD_1;
+				}
+				else if( minSAD_1 < right_feat_assign[minSAD_idx].second )
+				{
+					// undo the previous one and set the new one
+					left_matches_idxs[right_feat_assign[minSAD_idx].first] = INVALID_IDX;
+					left_matches_idxs[idx_feats_L]			= minSAD_idx;
+					right_feat_assign[minSAD_idx].first		= idx_feats_L;		// will keep the **BEST** match
+					right_feat_assign[minSAD_idx].second	= minSAD_1;
+				}
+			} // end-if
+			else
+			{
+				// check if the right feature has been already assigned
+				if( right_feat_assign[minSAD_idx].first == INVALID_IDX )
+				{
+					left_matches_idxs[idx_feats_L]			= minSAD_idx;
+					right_feat_assign[minSAD_idx].first		= idx_feats_L;				// will keep the **FIRST** match
+					right_feat_assign[minSAD_idx].second	= minSAD_1;
+				}
+			}
+		} // end--left_for
+
+		mrpt::system::os::fclose(f);
+
+		// Create output matches
+		const size_t out_size = left_matches_idxs.size();
+		imgpair.orb_matches.reserve( out_size );
+		for( int i = 0; i < out_size; ++i )
+		{
+			if( left_matches_idxs[i] != INVALID_IDX )
+			{
+				const size_t fr = left_matches_idxs[i];
+				const float d = float(right_feat_assign[fr].second);
+				imgpair.orb_matches.push_back( DMatch(i,fr,d) );
+			}
+		} // end--for
 #endif
 	} // end method orb feats
 	else if( params_detect.detect_method == TDetectParams::dmFASTER )
