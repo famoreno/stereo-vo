@@ -26,8 +26,9 @@
   */
 
 // opencv
-#include <cv.h>
-#include <highgui.h>
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/features2d/features2d.hpp>
 #include <opencv2/nonfree/features2d.hpp>
 
@@ -61,8 +62,10 @@ using namespace mrpt::math;
 using namespace mrpt::poses;
 using namespace mrpt::system;
 
-#include <fstream>
+typedef std::vector<cv::KeyPoint> TKeyPointList;
 
+#include <fstream>
+#define DUMP_BOOL_VAR(_B) _B ? cout << "Yes" : cout << "No"; cout << endl;
 #define SHOW_WARNING(MSG) cout << "[Visual Odometry] " << MSG << endl;
 #define DUMP_VO_ERROR_CODE( _CODE ) \
 	cout << "[sVO] ERROR: "; \
@@ -81,6 +84,16 @@ struct KpRadiusSorter : public std::binary_function<size_t,size_t,bool>
 		return ( m_radius_data[k1] > m_radius_data[k2] );
 	}
 };
+
+struct KpRowSorter : public std::binary_function<size_t,size_t,bool>
+{
+	const TKeyPointList & m_data;
+	KpRowSorter( const TKeyPointList & data ) : m_data( data ) { }
+	bool operator() (size_t k1, size_t k2 ) const {
+		return (m_data[k1].pt.y > m_data[k2].pt.y);
+	}
+}; // end -- KpRowSorter
+
 
 typedef struct t_change_in_pose_output {
 	mrpt::poses::CPose3D	change_in_pose;
@@ -401,28 +414,51 @@ namespace rso
 		struct TLeftRightMatchParams
 		{
 			TLeftRightMatchParams();
-			uint32_t maximum_SAD;				//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
-			bool     enable_robust_1to1_match;	//!< Only match if a pair of L/R features have the best match score to each other (default: false)
-			double	 max_SAD_ratio;				//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
-			bool     rectified_images;			//!< Indicates if the stereo pair has parallel optical axes
-			double   max_y_diff;				//!< Maximum allowed distance in pixels from the same row in the images for corresponding feats
-			double   orb_max_distance;			//!< Maximum allowed Hamming distance between a pair of features to be considered a match
-			double   min_z, max_z;				//!< Min/Max value for the Z coordinate of 3D feature to be considered (reject too close/far features)
 
-			int		 orb_min_th, orb_max_th;	//!< Limits for the ORB matching threshold
+			// Stereo matching method enumeration
+			enum smMethod { smSAD = 0, smDescBF, smDescRbR };
+			smMethod	match_method;				//!< The selected method to perform stereo matching. Compatibility: {smSAD} -> {ORB,KLT,FAST[ER],FAST[ER]+ORB} and {smDescBF,smDescRbR} -> {ORB,FAST[ER]+ORB}
+			
+			// SAD
+			uint32_t	maximum_SAD;				//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
+			double		max_SAD_ratio;				//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
+
+			// ORB
+			double		orb_max_distance;			//!< Maximum allowed Hamming distance between a pair of features to be considered a match
+			int			orb_min_th, orb_max_th;		//!< Limits for the ORB matching threshold (dynamic ORB matching limits)
+
+			// GENERAL
+			bool		enable_robust_1to1_match;	//!< Only match if a pair of L/R features have the best match score to each other (default: false)
+			bool		rectified_images;			//!< Indicates if the stereo pair has parallel optical axes
+			double		max_y_diff;					//!< Maximum allowed distance in pixels from the same row in the images for corresponding feats
+			double		min_z, max_z;				//!< Min/Max value for the Z coordinate of 3D feature to be considered (reject too close/far features)
 
 			void dumpToConsole()
 			{
+				cout << "	[MATCH]		Method: ";
+				switch( match_method )
+				{
+				case smSAD		: 
+					cout << "SAD" << endl;
+					cout << "	[MATCH]		Maximum Sum of Absolute Differences (SAD): " << maximum_SAD << endl;
+					cout << "	[MATCH]		Maximum SAD ratio: " << max_SAD_ratio << endl;
+					break;
+				case smDescBF	: 
+					cout << "Descriptor (Brute-force)" << endl;
+					cout << "	[MATCH]		Maximum ORB distance: " << orb_max_distance << endl;
+					cout << "	[MATCH]		ORB distance limits: " << orb_min_th << "/" << orb_max_th << endl;
+					break;
+				case smDescRbR	: 
+					cout << "Descriptor (Row-by-row) -- requires row-ordered keypoint vector (from top to bottom)" << endl;
+					cout << "	[MATCH]		Maximum ORB distance: " << orb_max_distance << endl;
+					cout << "	[MATCH]		ORB distance limits: " << orb_min_th << "/" << orb_max_th << endl;
+					break;
+				}
 				cout << "	[MATCH]		Enable robust 1 to 1 match?: ";
-				enable_robust_1to1_match ? cout << "Yes" : cout << "No"; cout << endl;
-				cout << "	[MATCH]		Maximum Sum of Absolute Differences (SAD): " << maximum_SAD << endl;
-				cout << "	[MATCH]		Maximum SAD ratio: " << max_SAD_ratio << endl;
+				DUMP_BOOL_VAR(enable_robust_1to1_match)
 				cout << "	[MATCH]		Stereo pair has parallel optical axes?: ";
-				rectified_images ? cout << "Yes" : cout << "No"; cout << endl;
-				if( rectified_images )
-					cout << "	[MATCH]		Maximum 'y' distance allowed between matched features: " << max_y_diff << endl;
-				cout << "	[MATCH]		Maximum ORB distance: " << orb_max_distance << endl;
-				cout << "	[MATCH]		ORB distance limits: " << orb_min_th << "/" << orb_max_th << endl;
+				DUMP_BOOL_VAR(rectified_images)
+				if( rectified_images ) cout << "	[MATCH]		Maximum 'y' distance allowed between matched features: " << max_y_diff << endl;
 				cout << "	[MATCH]		Min/Max value for the Z coordinate of 3D feature to be considered: " << min_z << "/" << max_z << endl;
 			}
 		};
@@ -624,7 +660,7 @@ namespace rso
 		size_t                            m_last_match_ID;						//!< Identificator of the last match ID
 		size_t							  m_kf_max_match_ID;
 
-		// orb method: fast detector and orb matching thresholds
+		// orb method: fast detector and orb matching (dynamic) thresholds
 		int								m_current_fast_th;
 		int								m_current_orb_th;
 
@@ -642,6 +678,7 @@ namespace rso
 			{
 				mrpt::vision::CImagePyramid                   pyr;              //!< Pyramid of grayscale images
 				std::vector<mrpt::vision::TSimpleFeatureList> pyr_feats;        //!< Features in each pyramid
+				std::vector<TKeyPointList>					  pyr_feats_kps;    //!< Features in each pyramid (keypoint version) <- will substitute [orb_matches]
 				std::vector<mrpt::vector_size_t>              pyr_feats_index;  //!< Index of feature indices per row
 				std::vector<cv::Mat>                          pyr_feats_desc;   //!< ORB Descriptors of the features
 
@@ -703,7 +740,11 @@ namespace rso
 
 		/** Updates the row index matrix
         */
-		void m_update_indexes( TImagePairData::img_data_t &data, size_t octave );
+		void m_update_indexes( TImagePairData::img_data_t & data, size_t octave, const bool order );
+
+		/** Updates the row index matrix
+        */
+		void m_featlist_to_kpslist( CStereoOdometryEstimator::TImagePairData::img_data_t & img_data );
         
 		/** Performs m_non_max_suppression for the detected features
         */

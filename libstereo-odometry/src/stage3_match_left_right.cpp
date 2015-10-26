@@ -55,14 +55,14 @@ CStereoOdometryEstimator::TLeftRightMatchParams::TLeftRightMatchParams() :
 {
 }
 
-/**  Stage2 operations:
-  *   - Detect features on each image and on each scale.
+/**  Stage3 operations:
+  *   - Match left and right keypoints at each scale (this should work well for stereo matching)
   */
 void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator::TImagePairData & imgpair, const TStereoCamera & stereoCamera )
 {
 	m_profiler.enter("_stg3");
 
-	const size_t nOctaves = imgpair.left.pyr_feats.size();
+	const size_t nOctaves = imgpair.left.pyr_feats.size();	// '1' for ORB features, 'n' for the rest
 
 	// Alloc lists of pairings for each octave
     imgpair.lr_pairing_data.resize(nOctaves);
@@ -73,6 +73,15 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 
     // Search for pairings:
     m_profiler.enter("stg3.find_pairings");
+
+	// ***********************************
+	// Sum of absolute differences between [8x8] patches (will use SSE instructions if available)
+	// ***********************************
+	if( params_lr_match.match_method == TLeftRightMatchParams::smSAD )
+	{
+
+
+	}
 
 	// ***********************************
 	// KLT method --> use SAD+Epipolar+X-constraint
@@ -86,8 +95,8 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 			{
 				const vector<KeyPoint> & feats_right = imgpair.right.orb_feats; // shortcut
 
-				// filter 0: break if we the right y-coord has passed the left one + disparity_th
-				// (assuming that left features are stored ordered from lower 'y' to higher 'y'
+				// filter 0: break if the right y-coord has passed the left one + disparity_th
+				// (assuming that features are stored ordered from lower 'y' to higher 'y'
 				if( feats_right[fr].pt.y+params_lr_match.max_y_diff > feats_left[fl].pt.y)
 					break;
 

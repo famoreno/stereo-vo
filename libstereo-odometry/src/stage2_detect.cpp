@@ -25,6 +25,22 @@
 using namespace rso;
 using namespace cv;
 
+// auxliar local methods
+/**  Transform a TSimpleFeatureList into a TKeyPointList (opencv compatible)
+  */
+void m_convert_featureList_to_keypointList( const TSimpleFeatureList & featList, TKeyPointList & kpList )
+{
+	kpList.resize( featList.size() );
+	TKeyPointList::iterator it1		 = kpList.begin();
+	TSimpleFeatureList::const_iterator it2 = featList.begin();
+	for( ; it1 != kpList.end(); ++it1, ++it2 )
+	{
+		it1->pt.x		= it2->pt.x;
+		it1->pt.y		= it2->pt.y;
+		it1->response	= it2->response;
+	} // end-for
+} // end--m_convert_featureList_to_keypointList
+
 CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 	target_feats_per_pixel (10./1000.),
 	initial_FAST_threshold(20/*6*/),
@@ -45,18 +61,45 @@ CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 // [i/o]	data		<- image data containing the features
 // [i]		octave		<- number of the octave to process
 // -------------------------------------------------
-void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & data, size_t octave )
+void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & data, size_t octave, const bool order = true )
 {
 	// preliminary assertions
 	ASSERTDEBMSG_(octave < data.pyr_feats_index[octave].size(),"Input 'octave' value is larger than pyramid size")
 
+	// 0. order features 
+	if( order )
+	{
+		TKeyPointList	& list	= data.pyr_feats_kps[octave];
+		Mat				& desc	= data.pyr_feats_desc[octave];
+		const size_t	N		= list.size();
+
+		TKeyPointList aux_list(N);
+		Mat aux_desc; // (desc.rows,desc.cols,desc.type());
+
+		// First: order them by row
+		vector<size_t> sorted_indices( N );
+		for(size_t i=0;i<N;i++)  sorted_indices[i]=i;
+		std::sort( sorted_indices.begin(), sorted_indices.end(), KpRowSorter(list) );
+
+		for(size_t i = 0; i < N; ++i)
+		{
+			aux_list[i]		= list[sorted_indices[i]];
+			aux_desc.row(i) = desc.row(sorted_indices[i]);
+		} // end-for
+
+		// swap lists
+		list.swap(aux_list);
+		desc = aux_desc;
+	} // end-if
+
+	// row-indexed vector is valid only if the features are ordered in 'y'
 	vector<size_t>::iterator fromRow = data.pyr_feats_index[octave].begin(), toRow;
 
     size_t feats_till_now = 0;
     size_t current_row = 0;
     for( size_t idx_feats = 0; idx_feats < data.pyr_feats[octave].size(); ++idx_feats)
     {
-        const TSimpleFeature &feat = data.pyr_feats[octave][idx_feats];
+		const KeyPoint &feat = data.pyr_feats_kps[octave][idx_feats];
         if( idx_feats == 0 )
         {
             current_row = feat.pt.y;
@@ -434,69 +477,124 @@ void CStereoOdometryEstimator::m_non_max_sup(
 	} // end-while
 }
 
+/**  Transform all octaves in member 'pyr_feats' (TSimpleFeatureList) into an openCV compatible version as member 'pyr_feats_kps' (TKeyPointList)
+  */
+void CStereoOdometryEstimator::m_featlist_to_kpslist( CStereoOdometryEstimator::TImagePairData::img_data_t & img_data )
+{
+	const size_t nPyrs = img_data.pyr.images.size();		
+	img_data.pyr_feats_kps.resize(nPyrs);
+	for( int octave = 0; octave < nPyrs; ++octave )
+		m_convert_featureList_to_keypointList( img_data.pyr_feats[octave], img_data.pyr_feats_kps[octave] );
+} // end--m_featlist_to_kpslist
+
 /**  Stage2 operations:
   *   - Detect features on each image and on each scale.
   */
 void CStereoOdometryEstimator::stage2_detect_features(
-	CStereoOdometryEstimator::TImagePairData::img_data_t & img_data,
-	mrpt::utils::CImage & gui_image,
-	bool update_dyn_thresholds )
+		CStereoOdometryEstimator::TImagePairData::img_data_t	& img_data,
+		mrpt::utils::CImage										& gui_image,
+		bool													update_dyn_thresholds )
 {
 	using namespace mrpt::vision;
 
 	m_profiler.enter("_stg2");
 
-	// Resize containers:
-	const size_t nPyrs = img_data.pyr.images.size();		// this will be 1 
-	vector<size_t> nFeatsPassingKLTPerOctave(nPyrs);        // for stats only
+	// :: Resize output containers:
+	const size_t nPyrs = img_data.pyr.images.size();
+	vector<size_t> nFeatsPassingKLTPerOctave(nPyrs);
     img_data.pyr_feats.resize(nPyrs);
     img_data.pyr_feats_index.resize(nPyrs);
+    img_data.pyr_feats_kps.resize(nPyrs);
     img_data.pyr_feats_desc.resize(nPyrs);
 
-	// Features and descriptors (if needed)
-	vector<KeyPoint> feats_vector;
-	Mat				 desc_aux;
-	Mat				 input_im = img_data.pyr.images[0].getAs<IplImage>();	// by now, only one level in the scale
-	
-	// ***********************************
-	// KLT method (use ORB feature vector, no descriptor)
-	// ***********************************
-	if( params_detect.detect_method == TDetectParams::dmKLT )
-	{
-		// detect Shi&Tomasi keypoints
-		goodFeaturesToTrack(
-			input_im,					// image
-			feats_vector,				// output feature vector
-			params_detect.orb_nfeats,	// number of features to detect
-			0.01,						// quality level
-			20);						// minimum distance
-		desc_aux = Mat();
-	}
-    // ***********************************
-	// ORB method
-	// ***********************************
-	else if( params_detect.detect_method == TDetectParams::dmORB )
-	{
-		const size_t n_feats_to_extract = 
-			params_detect.non_maximal_suppression ? 
-				1.5*params_detect.orb_nfeats : 
-				params_detect.orb_nfeats; // if non-max-sup is ON extract more features to get approx the number of desired output feats.
+	// :: For the GUI thread
+	m_next_gui_info->stats_feats_per_octave.resize(nPyrs); // Reserve size for stats
+    m_next_gui_info->stats_FAST_thresholds_per_octave.resize(nPyrs);
 
-		// detect ORB keypoints and descriptors
-		ORB orbDetector( 
-			n_feats_to_extract,			// number of ORB features to extract
-			1.2,						// scale difference
-			params_detect.orb_nlevels,  // number of levels
-			31,							// edgeThreshold
-			0,							// firstLevel
-			2,							// WTA_K
-			ORB::HARRIS_SCORE,			// scoreType
-			31,							// patchSize
-			m_current_fast_th );		// fast threshold
+	// :: Detection parameters
+	// FASTER METHOD --------------------
+	// - Evaluate the KLT response of all features to discard those in texture-less zones
+    const unsigned int KLT_win	= params_detect.KLT_win;
+    const double minimum_KLT	= params_detect.minimum_KLT;
+	// ----------------------------------
 
-        // detect keypoints and descriptors
-		orbDetector( input_im, Mat(), feats_vector, desc_aux );  // all the scales in the same call
-	}
+	// :: Main loop
+	for( size_t octave = 0; octave < nPyrs; ++octave )
+	{
+		// - Image information
+        Mat input_im = img_data.pyr.images[octave].getAs<IplImage>();
+		const mrpt::utils::TImageSize img_size = img_data.pyr.images[octave].getSize();
+
+		// - Profile section name
+		const std::string sProfileName = mrpt::format("stg2.detect.oct=%u",static_cast<unsigned int>(octave));
+
+		// - Auxiliar parameters that will store preliminar extracted information (before NMS)
+		TKeyPointList	feats_vector;
+		Mat				desc_aux;
+
+		// ***********************************
+		// KLT method (use ORB feature vector, no descriptor)
+		// ***********************************
+		if( params_detect.detect_method == TDetectParams::dmKLT )
+		{
+			m_profiler.enter(sProfileName.c_str());
+
+			// detect Shi&Tomasi keypoints
+			goodFeaturesToTrack(
+				input_im,					// image
+				feats_vector,				// output feature vector
+				params_detect.orb_nfeats,	// number of features to detect
+				0.01,						// quality level
+				20);						// minimum distance
+			
+			desc_aux = Mat();				// no descriptor
+
+			// update row-indexes
+			m_update_indexes( img_data, octave );
+
+            // gui info
+			m_next_gui_info->stats_feats_per_octave[octave] = 
+				nFeatsPassingKLTPerOctave[octave] = feats_vector.size();
+			
+			m_profiler.leave(sProfileName.c_str());
+		}
+		// ***********************************
+		// ORB method
+		// ***********************************
+		else if( params_detect.detect_method == TDetectParams::dmORB )
+		{
+			// ** NOTE ** in this case, nPyrs should be 1 (set in stage1)
+			const size_t n_feats_to_extract = 
+				params_detect.non_maximal_suppression ? 
+					1.5*params_detect.orb_nfeats : 
+					params_detect.orb_nfeats; // if non-max-sup is ON extract more features to get approx the number of desired output feats.
+
+			m_profiler.enter(sProfileName.c_str());
+			
+			// detect ORB keypoints and descriptors
+			ORB orbDetector( 
+				n_feats_to_extract,			// number of ORB features to extract
+				1.2,						// scale difference
+				params_detect.orb_nlevels,  // number of levels
+				31,							// edgeThreshold
+				0,							// firstLevel
+				2,							// WTA_K
+				ORB::HARRIS_SCORE,			// scoreType
+				31,							// patchSize
+				m_current_fast_th );		// fast threshold
+
+			// detect keypoints and descriptors
+			orbDetector( input_im, Mat(), feats_vector, desc_aux );  // all the scales in the same call
+
+			// update row-indexes
+			m_update_indexes( img_data, octave );
+			
+			// gui info
+            m_next_gui_info->stats_feats_per_octave[octave] = 
+				nFeatsPassingKLTPerOctave[octave] = feats_vector.size();
+			
+			m_profiler.enter(sProfileName.c_str());
+		}
 #if 0
 		// perform subpixel (it seems to be too slow)
 		{
@@ -533,41 +631,136 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			mrpt::system::os::fclose(fo);
 		}
 #endif
-	// ***********************************
-	// FAST+ORB method
-	// ***********************************
-	else if( params_detect.detect_method == TDetectParams::dmFAST_ORB )
-	{
-		cv::FastFeatureDetector(5).detect( input_im, feats_vector );			// detect keypoints
-		ORB().operator()(input_im, Mat(), feats_vector, desc_aux, true );		// extract descriptors
-	}
-	else
-	    THROW_EXCEPTION("	[sVO -- Stg2: Detect] ERROR: Unknown detection method")
-
-	// ***********************************
-	// Non-maximal suppression
-	// ***********************************
-	if( params_detect.non_maximal_suppression )
-	{
-		if( params_detect.nmsMethod == TDetectParams::nmsmStandard )
+		// ***********************************
+		// FAST+ORB method
+		// ***********************************
+		else if( params_detect.detect_method == TDetectParams::dmFAST_ORB )
 		{
-			const size_t imgH = input_im.rows;
-			const size_t imgW = input_im.cols;
-			this->m_non_max_sup( params_detect.orb_nfeats, feats_vector, desc_aux, img_data.orb_feats, img_data.orb_desc, imgH, imgW );
+			m_profiler.enter(sProfileName.c_str());
+			
+			cv::FastFeatureDetector(5).detect( input_im, feats_vector );			// detect keypoints
+			ORB().operator()(input_im, Mat(), feats_vector, desc_aux, true );		// extract descriptors
+
+			// update row-indexes
+			m_update_indexes( img_data, octave );
+
+			// gui info
+            m_next_gui_info->stats_feats_per_octave[octave] = 
+				nFeatsPassingKLTPerOctave[octave] = feats_vector.size();
+			
+			m_profiler.leave(sProfileName.c_str());
 		}
-		else if( params_detect.nmsMethod == TDetectParams::nmsmAdaptive )
-			this->m_adaptive_non_max_sup( params_detect.orb_nfeats, feats_vector, desc_aux, img_data.orb_feats, img_data.orb_desc );
+		// ***********************************
+		// FASTER method (no descriptor unless specified otherwise)
+		// ***********************************
+		else if( params_detect.detect_method == TDetectParams::dmFASTER )
+		{
+			// Use a dynamic threshold to maintain a target number of features per square pixel.
+			if( m_threshold.size() != nPyrs ) 
+				m_threshold.assign(nPyrs, params_detect.initial_FAST_threshold);
+
+			m_profiler.enter(sProfileName.c_str());
+
+            CFeatureExtraction::detectFeatures_SSE2_FASTER12(
+                img_data.pyr.images[octave],
+                img_data.pyr_feats[octave],
+                m_threshold[octave],
+                false,										// don't append to list, overwrite it
+                octave,
+                & img_data.pyr_feats_index[octave] );		// row-indexed list of features
+
+            const size_t nFeats = img_data.pyr_feats[octave].size();
+
+			// *****************************************************
+			// fill in the identifiers of the features
+            for( size_t id = 0; id < nFeats; ++id )
+                img_data.pyr_feats[octave][id].ID = this->m_lastID++;
+			// *****************************************************
+			
+			if( update_dyn_thresholds )
+            {
+                // Compute feature density & adjust dynamic threshold:
+                const double feats_density = nFeats / static_cast<double>(img_size.x * img_size.y);
+
+                if( feats_density < 0.8*params_detect.target_feats_per_pixel )
+                    m_threshold[octave] = std::max(1, m_threshold[octave]-1);
+                else if( feats_density > 1.2*params_detect.target_feats_per_pixel )
+                    m_threshold[octave] = m_threshold[octave]+1;
+
+                // Save stats for the GUI:
+                m_next_gui_info->stats_feats_per_octave[octave] = nFeats;
+                m_next_gui_info->stats_FAST_thresholds_per_octave[octave] = m_threshold[octave];
+            }
+
+            // compute KLT response
+            const std::string subSectionName = mrpt::format("stg2.detect.klt.oct=%u",static_cast<unsigned int>(octave));
+            m_profiler.enter(subSectionName.c_str());
+
+            const TImageSize img_size_min( KLT_win+1, KLT_win+1 );
+            const TImageSize img_size_max( img_size.x-KLT_win-1, img_size.y-KLT_win-1 );
+
+            size_t nPassed = 0; // Number of feats in this octave that pass the KLT threshold (for stats only)
+
+            for (size_t i=0;i<img_data.pyr_feats[octave].size();i++)
+            {
+                TSimpleFeature &f = img_data.pyr_feats[octave][i];
+                const TPixelCoord pt = f.pt;
+                if (pt.x>=img_size_min.x && pt.y>=img_size_min.y && pt.x<img_size_max.x && pt.y<img_size_max.y) {
+                     f.response = img_data.pyr.images[octave].KLT_response(pt.x,pt.y,KLT_win);
+                     if (f.response>=minimum_KLT) nPassed++;
+                }
+                else f.response = 0;
+            } // end-for
+
+            nFeatsPassingKLTPerOctave[octave] = nPassed;
+            m_profiler.leave(subSectionName.c_str());
+
+			/** /
+            // perform non-maximal suppression [5x5] window (if enabled)
+            if( params_detect.non_maximal_suppression )
+            {
+                // Non-maximal supression using KLT response
+                const string subSectionName2 = mrpt::format("stg2.detect.non-max.oct=%u",static_cast<unsigned int>(octave));
+                m_profiler.enter(subSectionName2.c_str());
+                m_non_max_sup( img_data, octave );
+                m_profiler.leave(subSectionName2.c_str());
+            } // end non-maximal suppression
+			/**/
+
+			// convert to TKeyPointList (opencv compatible)
+			m_convert_featureList_to_keypointList( img_data.pyr_feats[octave], feats_vector );
+
+            m_profiler.leave(sProfileName.c_str()); // end detect
+
+		}
 		else
-			THROW_EXCEPTION("	[sVO -- Stg2: Detect] Invalid non-maximal-suppression method." );
-	} // end-if-non-max-sup
-	else
-	{
-		feats_vector.swap(img_data.orb_feats);
-		img_data.orb_desc = desc_aux;					// this should copy just the header
-	}
+			THROW_EXCEPTION("	[sVO -- Stg2: Detect] ERROR: Unknown detection method")
+
+		// ***********************************
+		// Non-maximal suppression
+		// ***********************************
+		if( params_detect.non_maximal_suppression )
+		{
+			if( params_detect.nmsMethod == TDetectParams::nmsmStandard )
+			{
+				const size_t imgH = input_im.rows;
+				const size_t imgW = input_im.cols;
+				this->m_non_max_sup( params_detect.orb_nfeats, feats_vector, desc_aux, img_data.pyr_feats_kps[octave], img_data.pyr_feats_desc[octave], imgH, imgW );
+			}
+			else if( params_detect.nmsMethod == TDetectParams::nmsmAdaptive )
+				this->m_adaptive_non_max_sup( params_detect.orb_nfeats, feats_vector, desc_aux, img_data.pyr_feats_kps[octave], img_data.pyr_feats_desc[octave] );
+			else
+				THROW_EXCEPTION("	[sVO -- Stg2: Detect] Invalid non-maximal-suppression method." );
+		} // end-if-non-max-sup
+		else
+		{
+			feats_vector.swap(img_data.pyr_feats_kps[octave]);
+			img_data.pyr_feats_desc[octave] = desc_aux;					// this should be fast (just copy the header)
+		}
+	} // end-for
 
 	VERBOSE_LEVEL(2) << "	[sVO -- Stg2: Detect] Detected: " << img_data.orb_feats.size() << " feats" << endl;
-#if 1
+#if 0
 	// ***********************************
 	// FASTER method (no descriptor)
 	// ***********************************
@@ -654,52 +847,32 @@ void CStereoOdometryEstimator::stage2_detect_features(
                 m_profiler.leave(subSectionName2.c_str());
             } // end non-maximal suppression
 
+			// convert to TKeyPointList (opencv compatible)
+			m_trans_featlist_to_kpslist(img_data);
+
             m_profiler.leave(sProfileName.c_str()); // end detect
         }
 	}
 #endif
 
-	if (params_gui.show_gui && params_gui.draw_all_raw_feats)
+	if( params_gui.show_gui && params_gui.draw_all_raw_feats )
 	{
 		// (It's almost as efficient to directly draw these small feature marks at this point
 		// rather than send all the info to the gui thread and then draw there. A quick test shows
 		// a gain of 75us -> 50us only, so don't optimize unless efficiency pushes really hard).
 		m_profiler.enter("stg2.draw_feats");
 
-		if( params_detect.detect_method == TDetectParams::dmFASTER )
-		{
-            for (size_t octave=0;octave<nPyrs;octave++)
-            {
-                const TSimpleFeatureList &f1 = img_data.pyr_feats[octave];
-                const size_t n1 = f1.size();
+        for (size_t octave=0;octave<nPyrs;octave++)
+        {
+			const TKeyPointList & f1 = img_data.pyr_feats_kps[octave];
+            const size_t n1 = f1.size();
 
-                const bool org_img_color = gui_image.isColor();
-                unsigned char* ptr1 = gui_image.get_unsafe(0,0);
-                const size_t img1_stride = gui_image.getRowStride();
-                for(size_t i=0;i<n1;++i)
-                {
-                    const int x=f1[i].pt.x; const int y=f1[i].pt.y;
-                    unsigned char* ptr = ptr1 + img1_stride*y + (org_img_color ? 3*x:x);
-                    if (org_img_color) {
-                        *ptr++ = 0x00;
-                        *ptr++ = 0x00;
-                        *ptr++ = 0xFF;
-                    }
-                    else {
-                        *ptr = 0xFF;
-                    }
-                } // end-for
-            } // end-for
-		} // end-if
-		else
-		{
-		    const bool org_img_color = gui_image.isColor();
-            unsigned char* ptr1 = gui_image.get_unsafe(0,0);
-            const size_t img1_stride = gui_image.getRowStride();
-            const vector<cv::KeyPoint> &f1 = img_data.orb_feats;
-            for( vector<cv::KeyPoint>::const_iterator it = f1.begin(); it != f1.end(); ++it )
+            const bool org_img_color	= gui_image.isColor();
+            unsigned char* ptr1			= gui_image.get_unsafe(0,0);
+            const size_t img1_stride	= gui_image.getRowStride();
+            for(size_t i=0;i<n1;++i)
             {
-                const int x = it->pt.x; const int y = it->pt.y;
+                const int x=f1[i].pt.x; const int y=f1[i].pt.y;
                 unsigned char* ptr = ptr1 + img1_stride*y + (org_img_color ? 3*x:x);
                 if (org_img_color) {
                     *ptr++ = 0x00;
@@ -708,31 +881,23 @@ void CStereoOdometryEstimator::stage2_detect_features(
                 }
                 else {
                     *ptr = 0xFF;
-                } // end-else
+                }
             } // end-for
-		} // end-else
+        } // end-for
 
 		m_profiler.leave("stg2.draw_feats");
+	} // end-if
+
+    // for the GUI thread
+    string sPassKLT = "", sDetect = "";
+    for( size_t i=0;i<nPyrs;i++ )
+	{
+        sPassKLT += mrpt::format( "%u/",static_cast<unsigned int>(nFeatsPassingKLTPerOctave[i]) );
+        sDetect  += mrpt::format( "%u/",static_cast<unsigned int>(img_data.pyr_feats_kps[i].size()) );
 	}
 
-    if( params_detect.detect_method == TDetectParams::dmORB || params_detect.detect_method == TDetectParams::dmFAST_ORB )
-    {
-        m_next_gui_info->text_msg_from_detect += mrpt::format("%lu ", img_data.orb_feats.size());
-    }
-    else
-    {
-        // for the GUI thread
-        string sPassKLT;
-        for (size_t i=0;i<nPyrs;i++)
-            sPassKLT+=mrpt::format("%u/",static_cast<unsigned int>(nFeatsPassingKLTPerOctave[i]));
-
-        string sDetect;
-        for (size_t i=0;i<nPyrs;i++)
-            sDetect += mrpt::format("%u/",static_cast<unsigned int>(img_data.pyr_feats[i].size()));
-
-        string aux = mrpt::format( "\n%s feats (%s passed KLT)", sDetect.c_str(), sPassKLT.c_str() );
-        m_next_gui_info->text_msg_from_detect += aux;
-    } // end-else
+    string aux = mrpt::format( "\n%s feats (%s passed KLT)", sDetect.c_str(), sPassKLT.c_str() );
+    m_next_gui_info->text_msg_from_detect += aux;
 
 	m_profiler.leave("_stg2");
 }
