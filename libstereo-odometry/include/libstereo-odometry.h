@@ -65,6 +65,7 @@ using namespace mrpt::system;
 typedef std::vector<cv::KeyPoint> TKeyPointList;
 
 #include <fstream>
+#define INVALID_IDX -1
 #define DUMP_BOOL_VAR(_B) _B ? cout << "Yes" : cout << "No"; cout << endl;
 #define SHOW_WARNING(MSG) cout << "[Visual Odometry] " << MSG << endl;
 #define DUMP_VO_ERROR_CODE( _CODE ) \
@@ -360,47 +361,60 @@ namespace rso
 		/** Parameters for the keypoint detection */
 		struct TDetectParams
 		{
-			enum NMSMethod { nmsmStandard, nmsmAdaptive };	//!< Non-maximal suppression method: Standard or Adaptive
-		    enum TDMethod { dmORB, dmFAST_ORB, dmFASTER, dmKLT };	//!< Feature detection method: FASTER (not implemented), ORB or FAST+ORB
-
 			TDetectParams();
-			double		target_feats_per_pixel;		//!< Desired number of features per square pixel (Default: 10/1000)
-			int			initial_FAST_threshold;		//!< The initial threshold of the FAST feature detector, which will be dynamically adapted to fulfill \a target_feats_per_pixel (Default=15)
-			bool		non_maximal_suppression;	//!< Enable/disable the non-maximal suppression after the detection (5x5 windows is used)
-			int			KLT_win;					//!< Window for the KLT response evaluation (Default: 4)
-			double		minimum_KLT;				//!< Minimum KLT response not to discard a feature as being in a textureless zone (Default: 10)
+
+			enum NMSMethod { nmsmStandard, nmsmAdaptive };			//!< Non-maximal suppression method: Standard or Adaptive
+		    enum TDMethod { dmORB, dmFAST_ORB, dmFASTER, dmKLT };	//!< Feature detection method: FASTER (not implemented), ORB or FAST+ORB
+			
 			TDMethod	detect_method;				//!< Method to detect features (also affects to the matching process)
+
+			// General
+			double		target_feats_per_pixel;		//!< Desired number of features per square pixel (Default: 10/1000)
+
+			// KLT
+			int			KLT_win;					//!< Window for the KLT response evaluation (Default: 4)
+			double		minimum_KLT_response;		//!< Minimum KLT response to not to discard a feature as being in a textureless zone (Default: 10)
+			
+			// Non-maximal suppression
+			bool		non_maximal_suppression;	//!< Enable/disable the non-maximal suppression after the detection (5x5 windows is used)
 			NMSMethod	nmsMethod;					//!< Method to perform non maximal suppression
-			size_t		orb_nfeats;					//!< Number of features to be detected (only for ORB)
-			size_t		orb_nlevels;				//!< The number of pyramid levels
 			size_t		min_distance;				//!< The allowed minimun distance between features
 
-			int			fast_min_th, fast_max_th;	//!< Limits for the FAST detector threshold
+			// ORB + FAST
+			size_t		orb_nfeats;					//!< Number of features to be detected (only for ORB)
+			size_t		orb_nlevels;				//!< The number of pyramid levels
+			double		minimum_ORB_response;		//!< Minimum ORB response [Harris response] to not to discard a feature as being in a textureless zone (Default: 0.005)
+			int			fast_min_th, fast_max_th;	//!< Limits for the FAST (within ORB) detector (dynamic) threshold
+			int			initial_FAST_threshold;		//!< The initial threshold of the FAST feature detector, which will be dynamically adapted to fulfill \a target_feats_per_pixel (Default=15)
 
 			void dumpToConsole()
 			{
 				cout << "	[DETECT]	Detection method: ";
 				switch( detect_method )
 				{
-					case dmFASTER : cout << "FASTER" << endl; break;
-					case dmORB : cout << "ORB" << endl; break;
-					case dmFAST_ORB : cout << "FAST + ORB" << endl; break;
-				}
-				if( detect_method == dmORB )
-				{
-					cout << "	[DETECT]	Number of desired ORB features: " << orb_nfeats << endl;
-					cout << "	[DETECT]	Number of desired ORB levels in scale space: " << orb_nlevels << endl;
-				}
-				if( detect_method == dmFASTER || detect_method == dmFAST_ORB )
-				{				
-					cout << "	[DETECT]	Desired number of features per square pixel: " << target_feats_per_pixel << endl;
-					cout << "	[DETECT]	Initial FAST threshold: " << initial_FAST_threshold << endl;
-					cout << "	[DETECT]	FAST threshold limits: " << fast_min_th << ":" << fast_max_th << endl;
-					cout << "	[DETECT]	Window for the KLT response evaluation: " << KLT_win << endl;
-					cout << "	[DETECT]	Minimum KLT response to consider a feature: " << minimum_KLT << endl;
+					case dmFASTER :		cout << "FASTER" << endl; break;
+					case dmORB :		
+						cout << "ORB" << endl; 
+						cout << "	[DETECT]	Number of desired ORB features: " << orb_nfeats << endl;
+						cout << "	[DETECT]	Number of desired ORB levels in scale space: " << orb_nlevels << endl;
+						cout << "	[DETECT]	Minimum ORB (Harris) response to consider a feature: " << minimum_ORB_response << endl;
+						cout << "	[DETECT]	FAST threshold limits: " << fast_min_th << ":" << fast_max_th << endl;
+						break;
+					case dmFAST_ORB :	
+						cout << "FAST + ORB" << endl; 
+						cout << "	[DETECT]	Desired number of features per square pixel: " << target_feats_per_pixel << endl;
+						cout << "	[DETECT]	Initial FAST threshold: " << initial_FAST_threshold << endl;
+						cout << "	[DETECT]	FAST threshold limits: " << fast_min_th << ":" << fast_max_th << endl;
+						cout << "	[DETECT]	Window for the KLT response evaluation: " << KLT_win << endl;
+						cout << "	[DETECT]	Minimum KLT response to consider a feature: " << minimum_KLT_response << endl;
+						break;
+					case dmKLT :		
+						cout << "KLT" << endl; 
+						cout << "	[DETECT]	Minimum KLT response to consider a feature: " << minimum_KLT_response << endl;
+						break;
 				}
 				cout << "	[DETECT]	Perform Non Maximal Suppression (NMS)?: "; 
-				non_maximal_suppression ? cout << "Yes" : cout << "No"; cout << endl;
+				DUMP_BOOL_VAR(non_maximal_suppression)
 				cout << "	[DETECT]	NMS Method: ";
 				switch( nmsMethod )
 				{
@@ -530,7 +544,7 @@ namespace rso
 				params_detect.target_feats_per_pixel		= iniFile.read_double(sections[1], "target_feats_per_pixel", params_detect.target_feats_per_pixel, false);
 				params_detect.initial_FAST_threshold		= iniFile.read_int(sections[1], "initial_FAST_threshold", params_detect.initial_FAST_threshold, false);
 				params_detect.KLT_win						= iniFile.read_int(sections[1], "KLT_win", params_detect.KLT_win, false);
-				params_detect.minimum_KLT					= iniFile.read_double(sections[1], "minimum_KLT", params_detect.minimum_KLT, false);
+				params_detect.minimum_KLT_response					= iniFile.read_double(sections[1], "minimum_KLT_response", params_detect.minimum_KLT_response, false);
 				params_detect.non_maximal_suppression	    = iniFile.read_bool(sections[1], "non_maximal_suppression", params_detect.non_maximal_suppression, false);
 				int aux										= iniFile.read_int(sections[1], "detect_method", params_detect.detect_method, false);
 				switch(aux)
@@ -695,12 +709,17 @@ namespace rso
 				/** For this octave, the list of pairings of features: L&R indices as in \a pyr_feats
 				  * \note It is assumed that pairings are in top-bottom, left-right order
 				  */
-				vector_index_pairs_t matches_lr;
+				vector_index_pairs_t	matches_lr;
+
+				/** For this octave, the list of pairings of features: L&R indices as a vector of CV DMatch
+				  * \note It is assumed that pairings are in top-bottom, left-right order
+				  */
+				vector<cv::DMatch>		matches_lr_dm;
 
 				/** For this octave, a vector with length of number of rows in the images, containing the index of the first
 				  * matched pairs of features in that row. The indices are those found in \a matches_lr
 				  */
-				std::vector<size_t> matches_lr_row_index;
+				std::vector<size_t>		matches_lr_row_index;
 
 			};
 

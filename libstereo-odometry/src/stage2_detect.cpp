@@ -47,7 +47,7 @@ CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 	fast_min_th(5), fast_max_th(30),
 	non_maximal_suppression(true),
 	KLT_win(4),
-	minimum_KLT(10),
+	minimum_KLT_response(10),
 	detect_method(dmFASTER),
 	nmsMethod(nmsmStandard),
 	orb_nfeats(500),
@@ -515,7 +515,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 	// FASTER METHOD --------------------
 	// - Evaluate the KLT response of all features to discard those in texture-less zones
     const unsigned int KLT_win	= params_detect.KLT_win;
-    const double minimum_KLT	= params_detect.minimum_KLT;
+    const double minimum_KLT_response	= params_detect.minimum_KLT_response;
 	// ----------------------------------
 
 	// :: Main loop
@@ -707,7 +707,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
                 const TPixelCoord pt = f.pt;
                 if (pt.x>=img_size_min.x && pt.y>=img_size_min.y && pt.x<img_size_max.x && pt.y<img_size_max.y) {
                      f.response = img_data.pyr.images[octave].KLT_response(pt.x,pt.y,KLT_win);
-                     if (f.response>=minimum_KLT) nPassed++;
+                     if (f.response>=minimum_KLT_response) nPassed++;
                 }
                 else f.response = 0;
             } // end-for
@@ -774,7 +774,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 
         // Evaluate the KLT response of all features to discard those in texture-less zones:
         const unsigned int KLT_win	= params_detect.KLT_win;
-        const double minimum_KLT	= params_detect.minimum_KLT;
+        const double minimum_KLT_response	= params_detect.minimum_KLT_response;
 
         for (size_t octave=0;octave<nPyrs;octave++)
         {
@@ -829,7 +829,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
                 const TPixelCoord pt = f.pt;
                 if (pt.x>=img_size_min.x && pt.y>=img_size_min.y && pt.x<img_size_max.x && pt.y<img_size_max.y) {
                      f.response = img_data.pyr.images[octave].KLT_response(pt.x,pt.y,KLT_win);
-                     if (f.response>=minimum_KLT) nPassed++;
+                     if (f.response>=minimum_KLT_response) nPassed++;
                 }
                 else f.response = 0;
             } // end-for
