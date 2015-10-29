@@ -168,14 +168,17 @@ void CStereoOdometryEstimator::processNewImagePair(
 		if( params_general.vo_use_matches_ids )
 		{
 			ASSERT_( request_data.precomputed_matches_ID )
-			cur_imgpair.orb_matches_ID.resize( request_data.precomputed_matches_ID->size() );
-			std::copy( request_data.precomputed_matches_ID->begin(), request_data.precomputed_matches_ID->end(), cur_imgpair.orb_matches_ID.begin() );
+			cur_imgpair.lr_pairing_data[0].matches_IDs.resize( request_data.precomputed_matches_ID->size() );
+			std::copy( request_data.precomputed_matches_ID->begin(), request_data.precomputed_matches_ID->end(), cur_imgpair.lr_pairing_data[0].matches_IDs.begin() );
+			//cur_imgpair.orb_matches_ID.resize( request_data.precomputed_matches_ID->size() );
+			//std::copy( request_data.precomputed_matches_ID->begin(), request_data.precomputed_matches_ID->end(), cur_imgpair.orb_matches_ID.begin() );
 
 			this->m_kf_ids.resize( request_data.precomputed_matches_ID->size() );
 			std::copy( request_data.precomputed_matches_ID->begin(), request_data.precomputed_matches_ID->end(), this->m_kf_ids.begin() );
 
 			// set the maximum match ID and the maximum match ID from the last KF
-			this->m_last_match_ID = this->m_kf_max_match_ID = *cur_imgpair.orb_matches_ID.rbegin();		// must be the last
+			//this->m_last_match_ID = this->m_kf_max_match_ID = *cur_imgpair.orb_matches_ID.rbegin();					// must be the last
+			this->m_last_match_ID = this->m_kf_max_match_ID = *cur_imgpair.lr_pairing_data[0].matches_IDs.rbegin();		// must be the last
 		} // end-if
 		else
 		{
@@ -187,14 +190,14 @@ void CStereoOdometryEstimator::processNewImagePair(
 	{
 		if( this->m_reset )
 		{
-			// in RESET flag is set:
+			// in RESET flag is set
 			//		clear the IDs from the previous frame and reset them to the range 0...N-1
 			//		set the maximum match IDs
 			const size_t num_p_matches = this->m_prev_imgpair->orb_matches.size();
 			this->m_last_match_ID = this->m_kf_max_match_ID = num_p_matches-1;
 			this->m_kf_ids.resize( num_p_matches );
 			for( size_t m = 0; m < num_p_matches; ++m )
-				this->m_kf_ids[m] = this->m_prev_imgpair->orb_matches_ID[m] = m;
+				this->m_kf_ids[m] = this->m_prev_imgpair->lr_pairing_data[0].matches_IDs[m] = m; //this->m_kf_ids[m] = this->m_prev_imgpair->orb_matches_ID[m] = m;
 			this->m_reset = false;													// unset RESET flag
 		}
 

@@ -290,6 +290,30 @@ namespace rso
 			}
 		};
 
+		struct TInterFrameMatchingParams
+		{
+			TInterFrameMatchingParams();
+			enum TIFMMethod {ifmSAD = 0, ifmOpticalFlow, ifmDescWin, ifmDescBF};
+			TIFMMethod ifm_method;			//!< Inter-frame matching method
+
+			int ifm_win_w, ifm_win_h;		//!< Window size for searching for inter-frame matches
+
+			// SAD
+			uint32_t	max_SAD_distance;	//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
+			double		max_SAD_ratio;		//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
+
+			// ORB
+			double		max_ORB_distance;	//!< Maximum allowed Hamming distance between a pair of features to be considered a match
+
+			// General
+			bool		filter_fund_matrix;	//!< Wether or not use fundamental matrix to remove outliers between inter-frame matches	
+			
+			void dumpToConsole()
+			{
+
+			}
+		};
+
 		/** Parameters for the LS optimization stage */
 		struct TLeastSquaresParams
 		{
@@ -478,12 +502,14 @@ namespace rso
 		};
 
 		/** Different parameters for the SRBA methods */
-		TRectifyParams			params_rectify;
-		TDetectParams			params_detect;
-		TLeastSquaresParams		params_least_squares;
-		TLeftRightMatchParams	params_lr_match;
-		TGUIParams				params_gui;
-		TGeneralParams			params_general;
+		TRectifyParams				params_rectify;
+		TDetectParams				params_detect;
+		TLeftRightMatchParams		params_lr_match;
+		TInterFrameMatchingParams	params_if_match;
+		TLeastSquaresParams			params_least_squares;
+		TGUIParams					params_gui;
+		TGeneralParams				params_general;
+		
 
 	/** @} */  // End of data fields
 	//---------------------------------------------------------------
@@ -530,11 +556,11 @@ namespace rso
 		int getKeyPressedOnGUI();
 
 		/** Loads configuration from an INI file
-		  * Sections must be (in this order) related to: RECTIFY, DETECT, MATCH, LEAST_SQUARES, GUI, GENERAL
+		  * Sections must be (in this order) related to: RECTIFY, DETECT, MATCH, IF-MATCH, LEAST_SQUARES, GUI, GENERAL
 		  */
 		void loadParamsFromConfigFile( const mrpt::utils::CConfigFile &iniFile, const std::vector<std::string> &sections)
 		{
-			ASSERT_(sections.size() == 6)	// one section for type of params:
+			ASSERT_(sections.size() == 7)	// one section for type of params:
 
 			if( sections[0].size() > 0 )	// rectify
 				params_rectify.nOctaves						= iniFile.read_int(sections[0], "nOctaves", params_rectify.nOctaves, false);
@@ -579,35 +605,46 @@ namespace rso
 				params_lr_match.max_z						= iniFile.read_double(sections[2], "max_z", params_lr_match.max_z, false);
 			}
 
-			if( sections[3].size() > 0 )	// least squares
+			if( sections[3].size() > 0 )	// inter-frame matching
 			{
-				params_least_squares.kernel_param			= iniFile.read_double(sections[3], "kernel_param", params_least_squares.kernel_param, false);
-				params_least_squares.max_error_per_obs_px	= iniFile.read_double(sections[3], "max_error_per_obs_px", params_least_squares.max_error_per_obs_px, false);
-				params_least_squares.max_iters				= iniFile.read_int(sections[3], "max_iters", params_least_squares.max_iters, false);
-				params_least_squares.initial_max_iters      = iniFile.read_int(sections[3], "initial_max_iters", params_least_squares.initial_max_iters, false);
-				params_least_squares.max_incr_cost          = iniFile.read_int(sections[3], "max_incr_cost", params_least_squares.max_incr_cost, false);
-				params_least_squares.std_noise_pixels		= iniFile.read_double(sections[3], "std_noise_pixels", params_least_squares.std_noise_pixels, false);
-				params_least_squares.residual_threshold		= iniFile.read_double(sections[3], "residual_threshold", params_least_squares.residual_threshold, false);
-				params_least_squares.use_robust_kernel		= iniFile.read_bool(sections[3], "use_robust_kernel", params_least_squares.use_robust_kernel, false);
-				params_least_squares.bad_tracking_th        = iniFile.read_int(sections[3], "bad_tracking_th", params_least_squares.bad_tracking_th, false);
-				params_least_squares.use_previous_pose_as_initial = iniFile.read_bool(sections[3], "use_previous_pose_as_initial", params_least_squares.use_previous_pose_as_initial, false);
+				params_if_match.filter_fund_matrix			= iniFile.read_bool(sections[3], "filter_fund_matrix", params_if_match.filter_fund_matrix, false);
+				int aux = iniFile.read_int(sections[3], "method", 0, false); 
+				params_if_match.ifm_method					= static_cast<TInterFrameMatchingParams::TIFMMethod>(aux);
+				params_if_match.ifm_win_h					= iniFile.read_int(sections[3], "window_height", params_if_match.ifm_win_h, false);
+				params_if_match.ifm_win_w					= iniFile.read_int(sections[3], "window_width", params_if_match.ifm_win_w, false);
+				params_if_match.max_SAD_ratio				= iniFile.read_double(sections[3], "max_SAD_ratio", params_if_match.max_SAD_ratio, false);
+				params_if_match.max_SAD_distance			= iniFile.read_int(sections[3], "max_SAD_distance", params_if_match.max_SAD_distance, false);
+                params_if_match.max_ORB_distance            = iniFile.read_double(sections[3], "max_ORB_distance", params_if_match.max_ORB_distance, false);;
+			}
+			if( sections[4].size() > 0 )	// least squares
+			{
+				params_least_squares.kernel_param			= iniFile.read_double(sections[4], "kernel_param", params_least_squares.kernel_param, false);
+				params_least_squares.max_error_per_obs_px	= iniFile.read_double(sections[4], "max_error_per_obs_px", params_least_squares.max_error_per_obs_px, false);
+				params_least_squares.max_iters				= iniFile.read_int(sections[4], "max_iters", params_least_squares.max_iters, false);
+				params_least_squares.initial_max_iters      = iniFile.read_int(sections[4], "initial_max_iters", params_least_squares.initial_max_iters, false);
+				params_least_squares.max_incr_cost          = iniFile.read_int(sections[4], "max_incr_cost", params_least_squares.max_incr_cost, false);
+				params_least_squares.std_noise_pixels		= iniFile.read_double(sections[4], "std_noise_pixels", params_least_squares.std_noise_pixels, false);
+				params_least_squares.residual_threshold		= iniFile.read_double(sections[4], "residual_threshold", params_least_squares.residual_threshold, false);
+				params_least_squares.use_robust_kernel		= iniFile.read_bool(sections[4], "use_robust_kernel", params_least_squares.use_robust_kernel, false);
+				params_least_squares.bad_tracking_th        = iniFile.read_int(sections[4], "bad_tracking_th", params_least_squares.bad_tracking_th, false);
+				params_least_squares.use_previous_pose_as_initial = iniFile.read_bool(sections[4], "use_previous_pose_as_initial", params_least_squares.use_previous_pose_as_initial, false);
 			}
 
-			if( sections[4].size() > 0 )	// GUI
+			if( sections[5].size() > 0 )	// GUI
 			{
-				params_gui.show_gui							= iniFile.read_bool(sections[4], "show_gui", params_gui.show_gui, false);
-				params_gui.draw_all_raw_feats				= iniFile.read_bool(sections[4], "draw_all_raw_feats", params_gui.draw_all_raw_feats, false);
-				params_gui.draw_lr_pairings					= iniFile.read_bool(sections[4], "draw_lr_pairings", params_gui.draw_lr_pairings, false);
-				params_gui.draw_tracking					= iniFile.read_bool(sections[4], "draw_tracking", params_gui.draw_tracking, false);
+				params_gui.show_gui							= iniFile.read_bool(sections[5], "show_gui", params_gui.show_gui, false);
+				params_gui.draw_all_raw_feats				= iniFile.read_bool(sections[5], "draw_all_raw_feats", params_gui.draw_all_raw_feats, false);
+				params_gui.draw_lr_pairings					= iniFile.read_bool(sections[5], "draw_lr_pairings", params_gui.draw_lr_pairings, false);
+				params_gui.draw_tracking					= iniFile.read_bool(sections[5], "draw_tracking", params_gui.draw_tracking, false);
 			}
 
-			if( sections[5].size() > 0 )	// GENERAL
+			if( sections[6].size() > 0 )	// GENERAL
 			{
-				params_general.vo_use_matches_ids		= iniFile.read_bool(sections[5], "vo_use_matches_ids", params_general.vo_use_matches_ids, false);
-				params_general.vo_save_files			= iniFile.read_bool(sections[5], "vo_save_files", params_general.vo_save_files, false);
-				params_general.vo_debug					= iniFile.read_bool(sections[5], "vo_debug", params_general.vo_debug, false);
-				params_general.vo_pause_it				= iniFile.read_bool(sections[5], "vo_pause_it", params_general.vo_pause_it, false);
-				params_general.vo_out_dir				= iniFile.read_string(sections[5], "vo_out_dir", params_general.vo_out_dir, false );
+				params_general.vo_use_matches_ids		= iniFile.read_bool(sections[6], "vo_use_matches_ids", params_general.vo_use_matches_ids, false);
+				params_general.vo_save_files			= iniFile.read_bool(sections[6], "vo_save_files", params_general.vo_save_files, false);
+				params_general.vo_debug					= iniFile.read_bool(sections[6], "vo_debug", params_general.vo_debug, false);
+				params_general.vo_pause_it				= iniFile.read_bool(sections[6], "vo_pause_it", params_general.vo_pause_it, false);
+				params_general.vo_out_dir				= iniFile.read_string(sections[6], "vo_out_dir", params_general.vo_out_dir, false );
 			}
 
 			resetFASTThreshold();
@@ -625,14 +662,18 @@ namespace rso
 
 		/** Sets/resets the match IDs generator */
 		void inline resetIds( const bool reset = true ) { this->m_reset = reset; }
-		void inline setIds( const vector<size_t> & ids ) { 
+		void inline setIds( const vector<size_t> & ids ) {	// only for ORB (since it is just one scale)
 			if( this->m_current_imgpair ) {
-				this->m_current_imgpair->orb_matches_ID.resize(ids.size()); 
-				std::copy(ids.begin(), ids.end(), this->m_current_imgpair->orb_matches_ID.begin()); 
+				this->m_current_imgpair->lr_pairing_data[0].matches_IDs.resize(ids.size());
+				std::copy(ids.begin(), ids.end(), m_current_imgpair->lr_pairing_data[0].matches_IDs.begin());
+				//this->m_current_imgpair->orb_matches_ID.resize(ids.size()); 
+				//std::copy(ids.begin(), ids.end(), this->m_current_imgpair->orb_matches_ID.begin()); 
 			}
 			else {
-				this->m_prev_imgpair->orb_matches_ID.resize(ids.size()); 
-				std::copy(ids.begin(), ids.end(), this->m_prev_imgpair->orb_matches_ID.begin()); 
+				this->m_prev_imgpair->lr_pairing_data[0].matches_IDs.resize(ids.size()); 
+				std::copy(ids.begin(), ids.end(), this->m_prev_imgpair->lr_pairing_data[0].matches_IDs.begin()); 
+				//this->m_prev_imgpair->orb_matches_ID.resize(ids.size()); 
+				//std::copy(ids.begin(), ids.end(), this->m_prev_imgpair->orb_matches_ID.begin()); 
 			}
 		} // end-setIds
 
@@ -711,15 +752,20 @@ namespace rso
 				  */
 				vector_index_pairs_t	matches_lr;
 
-				/** For this octave, the list of pairings of features: L&R indices as a vector of CV DMatch
+				/** For this octave, the list of pairings of features: L&R indices as a vector of OpenCV DMatch
 				  * \note It is assumed that pairings are in top-bottom, left-right order
 				  */
 				vector<cv::DMatch>		matches_lr_dm;
 
 				/** For this octave, a vector with length of number of rows in the images, containing the index of the first
-				  * matched pairs of features in that row. The indices are those found in \a matches_lr
+				  * matched pairs of features in that row. The indices are those found in \a matches_lr and/or \a matches_lr_dm
 				  */
 				std::vector<size_t>		matches_lr_row_index;
+
+				/** For this octave, a vector with length of number of found matches, containing the IDs of the
+				  * matched pairs of features.
+				  */
+				std::vector<size_t>		matches_IDs;
 
 			};
 
@@ -840,6 +886,11 @@ namespace rso
 			return true;
 		}
 
+		void m_filter_by_fundmatrix( 
+			const vector<cv::Point2f>	& prevPts, 
+			const vector<cv::Point2f>	& nextPts, 
+			vector<uchar>				& status ) const;
+
 	//---------------------------------------------------------------
 	/** @name GUI stuff
 	    @{ */
@@ -930,22 +981,24 @@ namespace rso
 		/** Stage3 operations:
 		  *   - Match features between L/R images.
 		  */
-		void stage3_match_left_right( CStereoOdometryEstimator::TImagePairData & imgpair, const TStereoCamera & stereoCamera );
+		void stage3_match_left_right( 
+			CStereoOdometryEstimator::TImagePairData	& imgpair, 
+			const TStereoCamera							& stereoCamera );
 
 		/** Stage4 operations:
 		  *   - Track features in both L/R images between two consecutive time steps.
 		  *   - Robustness checks for tracking.
 		  */
 		void stage4_track(
-			TTrackingData &out_tracked_feats,
-			TImagePairData &prev_imgpair,
-			TImagePairData &cur_imgpair );
+			TTrackingData	& out_tracked_feats,
+			TImagePairData	& prev_imgpair,
+			TImagePairData	& cur_imgpair );
 
 		/** Stage5 operations:
 		  *   - Estimate the optimal change in pose between time steps.
 		  */
         void stage5_optimize(
-            TTrackingData					& out_tracked_feats,
+            TTrackingData						& out_tracked_feats,
             const mrpt::utils::TStereoCamera	& stereoCam,
             TStereoOdometryResult				& result,
 			const vector<double>				& initial_estimation = vector<double>(6,0) );

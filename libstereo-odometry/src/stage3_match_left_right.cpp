@@ -150,7 +150,7 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 
         // reserve space for IDs in case we use them (and this is the first iteration, otherwise this will be done in next step)
 		if( use_ids )
-			imgpair.orb_matches_ID.reserve( matches.size() );
+			imgpair.lr_pairing_data[0].matches_IDs.reserve( matches.size() ); // imgpair.orb_matches_ID.reserve( matches.size() );
 
 		const double min_disp = stereoCamera.rightCameraPose[0]*stereoCamera.leftCamera.fx()/params_lr_match.max_z;
 		const double max_disp = stereoCamera.rightCameraPose[0]*stereoCamera.leftCamera.fx()/params_lr_match.min_z;
@@ -170,15 +170,17 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
             {
                 ++itM;
 				if( use_ids )																	
-					imgpair.orb_matches_ID.push_back( this->m_last_match_ID++ );				
+					imgpair.lr_pairing_data[0].matches_IDs.push_back( this->m_last_match_ID++ ); // imgpair.orb_matches_ID.push_back( this->m_last_match_ID++ );				
             }
         } // end-while
 
 		if( use_ids )
 		{
 			// save this ids to get tracking info for them
-			this->m_kf_ids.resize( imgpair.orb_matches_ID.size() );
-			std::copy( imgpair.orb_matches_ID.begin(), imgpair.orb_matches_ID.end(), this->m_kf_ids.begin() );
+			this->m_kf_ids.resize( imgpair.lr_pairing_data[0].matches_IDs.size() );
+			std::copy( imgpair.lr_pairing_data[0].matches_IDs.begin(), imgpair.lr_pairing_data[0].matches_IDs.end(), this->m_kf_ids.begin() );
+			//this->m_kf_ids.resize( imgpair.orb_matches_ID.size() );
+			//std::copy( imgpair.orb_matches_ID.begin(), imgpair.orb_matches_ID.end(), this->m_kf_ids.begin() );
 		}
 	} // end brute-force (only for ORB)
 	

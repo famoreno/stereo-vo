@@ -493,7 +493,7 @@ bool CStereoOdometryEstimator::m_evalRGN(
 }
 
 void CStereoOdometryEstimator::stage5_optimize(
-	CStereoOdometryEstimator::TTrackingData	& out_tracked_feats,
+	CStereoOdometryEstimator::TTrackingData			& out_tracked_feats,
 	const mrpt::utils::TStereoCamera				& stereoCam,
 	TStereoOdometryResult							& result,
 	const vector<double>							& initial_estimation )	// [input] (w1,w2,w3,t1,t2,t3)
@@ -706,7 +706,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 		{
 			const size_t idx = out_tracked_feats.tracked_pairs[0][obs].second;
 			const size_t id  = params_general.vo_use_matches_ids ? 
-				m_current_imgpair->orb_matches_ID[ out_tracked_feats.tracked_pairs[0][obs].second /*current*/ ] : 
+				m_current_imgpair->lr_pairing_data[0].matches_IDs[ out_tracked_feats.tracked_pairs[0][obs].second /*current*/ ] : // m_current_imgpair->orb_matches_ID[ out_tracked_feats.tracked_pairs[0][obs].second /*current*/ ] : 
 				0;
 				result.outliers.push_back( make_pair(idx,id) );
 		}
