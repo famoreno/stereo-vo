@@ -63,8 +63,10 @@ using namespace mrpt::poses;
 using namespace mrpt::system;
 
 typedef std::vector<cv::KeyPoint> TKeyPointList;
+typedef std::vector<cv::DMatch> TDMatchList;
 
 #include <fstream>
+#define SQUARE(_X) _X*_X
 #define INVALID_IDX -1
 #define DUMP_BOOL_VAR(_B) _B ? cout << "Yes" : cout << "No"; cout << endl;
 #define SHOW_WARNING(MSG) cout << "[Visual Odometry] " << MSG << endl;
@@ -76,6 +78,10 @@ typedef std::vector<cv::KeyPoint> TKeyPointList;
 						case voecFirstIteration   : cout << "First iteration, no change in pose can be computed" << endl; break; \
 						case voecBadTracking	  : cout << "Number of tracked features is low " << endl; break; \
 						case voecNone : default   : cout << "None" << endl; break; }
+#define DUMP_VECTOR(_V) \
+	for(size_t k = 0; k < _V.size()-1; ++k) \
+		cout << _V[k] << ","; \
+	cout << _V[_V.size()-1] << endl;
 
 struct KpRadiusSorter : public std::binary_function<size_t,size_t,bool>
 {
@@ -85,13 +91,13 @@ struct KpRadiusSorter : public std::binary_function<size_t,size_t,bool>
 		return ( m_radius_data[k1] > m_radius_data[k2] );
 	}
 };
-
+// from lowest to highest row
 struct KpRowSorter : public std::binary_function<size_t,size_t,bool>
 {
 	const TKeyPointList & m_data;
 	KpRowSorter( const TKeyPointList & data ) : m_data( data ) { }
 	bool operator() (size_t k1, size_t k2 ) const {
-		return (m_data[k1].pt.y > m_data[k2].pt.y);
+		return (m_data[k1].pt.y < m_data[k2].pt.y);
 	}
 }; // end -- KpRowSorter
 
@@ -215,11 +221,11 @@ namespace rso
 			mrpt::utils::TStereoCamera stereo_cam;
 
 			/** Precomputed data */
-			bool use_precomputed_data;
-			vector<cv::KeyPoint> *precomputed_left_feats, *precomputed_right_feats;
-			cv::Mat *precomputed_left_desc, *precomputed_right_desc;
-			vector<cv::DMatch> *precomputed_matches;
-			vector<size_t> *precomputed_matches_ID;
+			bool						use_precomputed_data;
+			vector<TKeyPointList>		*precomputed_left_feats, *precomputed_right_feats;
+			vector<cv::Mat>				*precomputed_left_desc, *precomputed_right_desc;
+			vector<TDMatchList>			*precomputed_matches;
+			vector< vector<size_t> >	*precomputed_matches_ID;
 
 			/** Repeat */
 			bool repeat;
@@ -239,21 +245,22 @@ namespace rso
 		struct TStereoOdometryResult
 		{
 			// least square results
-		    CPose3D			outPose;
-			vector< pair<size_t,size_t> > outliers;
-			vector<double>	out_residual;
-			int				num_it, num_it_final;
+		    CPose3D							outPose;
+			vector<size_t>					outliers;						//!< outliers in each octave after optimization : includes NMS and residual thresholding (idx of current match in each octave)
+			vector<double>					out_residual;					//!< residual for each observation (tracked match)
+			int								num_it, num_it_final;			//!< number of iterations in the two stages of optimization
 
-			bool			valid;
-		    VOErrorCode		error_code;
-			size_t			tracked_feats_from_last_KF, tracked_feats_from_last_frame;
+			bool							valid;							//!< whether or not the result is valid
+		    VOErrorCode						error_code;						//!< error code for the method
+			size_t							tracked_feats_from_last_KF, 
+											tracked_feats_from_last_frame;	//!< control of number of tracked features (between consecutive frames and between keyframes)
 
-			pair<size_t,size_t> detected_feats;
-			size_t			stereo_matches;
+			vector< pair<size_t,size_t> >	detected_feats;					//!< number of detected features in each octave : .first (left image) and .second (right image)
+			vector<size_t>					stereo_matches;					//!< number of stereo matches in each octave : 
 
 		    TStereoOdometryResult() : 
 				outPose(CPose3D()), 
-				outliers(vector< pair<size_t,size_t> >()),
+				outliers(vector<size_t>()),
 				valid(false), 
 				tracked_feats_from_last_KF(0), 
 				tracked_feats_from_last_frame(0), 
@@ -262,9 +269,7 @@ namespace rso
 				num_it_final(0), 
 				error_code(voecNone), 
 				stereo_matches(0)
-				{ 
-					detected_feats.first = detected_feats.second = 0; 
-				}
+				{ }
 		};
 
 		struct TGeneralParams
@@ -293,17 +298,17 @@ namespace rso
 		struct TInterFrameMatchingParams
 		{
 			TInterFrameMatchingParams();
-			enum TIFMMethod {ifmSAD = 0, ifmOpticalFlow, ifmDescWin, ifmDescBF};
+			enum TIFMMethod {ifmDescBF = 0, ifmDescWin, ifmSAD, ifmOpticalFlow };
 			TIFMMethod ifm_method;			//!< Inter-frame matching method
 
 			int ifm_win_w, ifm_win_h;		//!< Window size for searching for inter-frame matches
 
 			// SAD
-			uint32_t	max_SAD_distance;	//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
-			double		max_SAD_ratio;		//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
+			uint32_t	sad_max_distance;	//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
+			double		sad_max_ratio;		//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
 
 			// ORB
-			double		max_ORB_distance;	//!< Maximum allowed Hamming distance between a pair of features to be considered a match
+			double		orb_max_distance;	//!< Maximum allowed Hamming distance between a pair of features to be considered a match
 
 			// General
 			bool		filter_fund_matrix;	//!< Wether or not use fundamental matrix to remove outliers between inter-frame matches	
@@ -454,12 +459,12 @@ namespace rso
 			TLeftRightMatchParams();
 
 			// Stereo matching method enumeration
-			enum smMethod { smSAD = 0, smDescBF, smDescRbR };
+			enum smMethod { smDescBF = 0, smDescRbR, smSAD };
 			smMethod	match_method;				//!< The selected method to perform stereo matching. Compatibility: {smSAD} -> {ORB,KLT,FAST[ER],FAST[ER]+ORB} and {smDescBF,smDescRbR} -> {ORB,FAST[ER]+ORB}
 			
 			// SAD
-			uint32_t	maximum_SAD;				//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
-			double		max_SAD_ratio;				//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
+			uint32_t	sad_max_distance;				//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
+			double		sad_max_ratio;				//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
 
 			// ORB
 			double		orb_max_distance;			//!< Maximum allowed Hamming distance between a pair of features to be considered a match
@@ -478,8 +483,8 @@ namespace rso
 				{
 				case smSAD		: 
 					cout << "SAD" << endl;
-					cout << "	[MATCH]		Maximum Sum of Absolute Differences (SAD): " << maximum_SAD << endl;
-					cout << "	[MATCH]		Maximum SAD ratio: " << max_SAD_ratio << endl;
+					cout << "	[MATCH]		Maximum Sum of Absolute Differences (SAD): " << sad_max_distance << endl;
+					cout << "	[MATCH]		Maximum SAD ratio: " << sad_max_ratio << endl;
 					break;
 				case smDescBF	: 
 					cout << "Descriptor (Brute-force)" << endl;
@@ -567,67 +572,85 @@ namespace rso
 
 			if( sections[1].size() > 0 )	// detection
 			{
+				// general
+				params_detect.detect_method					= static_cast<TDetectParams::TDMethod>( iniFile.read_int(sections[1], "detect_method", params_detect.detect_method, false) );
+				params_detect.min_distance					= iniFile.read_int(sections[1], "min_distance",params_detect.min_distance,false);
+				
+				// fast
 				params_detect.target_feats_per_pixel		= iniFile.read_double(sections[1], "target_feats_per_pixel", params_detect.target_feats_per_pixel, false);
 				params_detect.initial_FAST_threshold		= iniFile.read_int(sections[1], "initial_FAST_threshold", params_detect.initial_FAST_threshold, false);
+				params_detect.fast_min_th					= iniFile.read_int(sections[1], "fast_min_th",params_detect.fast_min_th,false);
+				params_detect.fast_max_th					= iniFile.read_int(sections[1], "fast_max_th",params_detect.fast_max_th,false);
+				
+				// KLT
 				params_detect.KLT_win						= iniFile.read_int(sections[1], "KLT_win", params_detect.KLT_win, false);
-				params_detect.minimum_KLT_response					= iniFile.read_double(sections[1], "minimum_KLT_response", params_detect.minimum_KLT_response, false);
-				params_detect.non_maximal_suppression	    = iniFile.read_bool(sections[1], "non_maximal_suppression", params_detect.non_maximal_suppression, false);
-				int aux										= iniFile.read_int(sections[1], "detect_method", params_detect.detect_method, false);
-				switch(aux)
-				{
-					case 0:
-					default: params_detect.detect_method = TDetectParams::dmORB; break;
-					case 1:  params_detect.detect_method = TDetectParams::dmFAST_ORB; break;
-					case 2:  params_detect.detect_method = TDetectParams::dmFASTER; break;
-				}
-                params_detect.nmsMethod						= iniFile.read_int(sections[1], "non_max_supp_method", params_detect.nmsMethod, false) == 0 ? TDetectParams::nmsmStandard : TDetectParams::nmsmAdaptive;
-                params_detect.orb_nfeats                    = iniFile.read_int(sections[1],"orb_nfeats",params_detect.orb_nfeats,false);
-				params_detect.orb_nlevels					= iniFile.read_int(sections[1],"orb_nlevels",params_detect.orb_nlevels,false);
-				params_detect.min_distance					= iniFile.read_int(sections[1],"min_distance",params_detect.min_distance,false);
+				params_detect.minimum_KLT_response			= iniFile.read_double(sections[1], "minimum_KLT_response", params_detect.minimum_KLT_response, false);
+				
+                // orb
+				params_detect.orb_nfeats                    = iniFile.read_int(sections[1], "orb_nfeats",params_detect.orb_nfeats,false);
+				params_detect.orb_nlevels					= iniFile.read_int(sections[1], "orb_nlevels",params_detect.orb_nlevels,false);
+				params_detect.minimum_ORB_response			= iniFile.read_double(sections[1], "minimum_ORB_response", params_detect.minimum_ORB_response, false);
 
-				params_detect.fast_min_th					= iniFile.read_int(sections[1],"fast_min_th",params_detect.fast_min_th,false);
-				params_detect.fast_max_th					= iniFile.read_int(sections[1],"fast_max_th",params_detect.fast_max_th,false);
+				// non-max-sup
+				params_detect.non_maximal_suppression	    = iniFile.read_bool(sections[1], "non_maximal_suppression", params_detect.non_maximal_suppression, false);
+				params_detect.nmsMethod						= static_cast<TDetectParams::NMSMethod>( iniFile.read_int(sections[1], "non_max_supp_method", params_detect.nmsMethod, false) );
 			}
 
 			if( sections[2].size() > 0 )	// left right matching
 			{
+				// general
+				params_lr_match.match_method				= static_cast<TLeftRightMatchParams::smMethod>(iniFile.read_int(sections[2], "match_method", params_lr_match.match_method, false) );
+				params_lr_match.max_y_diff				    = iniFile.read_double(sections[2], "max_y_diff", params_lr_match.max_y_diff, false);
 				params_lr_match.enable_robust_1to1_match	= iniFile.read_bool(sections[2], "enable_robust_1to1_match", params_lr_match.enable_robust_1to1_match, false);
 				params_lr_match.rectified_images	        = iniFile.read_bool(sections[2], "rectified_images", params_lr_match.rectified_images, false);
-				params_lr_match.max_SAD_ratio				= iniFile.read_double(sections[2], "max_SAD_ratio", params_lr_match.max_SAD_ratio, false);
-				params_lr_match.maximum_SAD					= iniFile.read_int(sections[2], "maximum_SAD", params_lr_match.maximum_SAD, false);
-
-				params_lr_match.orb_min_th					= iniFile.read_int(sections[2], "orb_min_th", params_lr_match.orb_min_th, false);
-				params_lr_match.orb_max_th					= iniFile.read_int(sections[2], "orb_max_th", params_lr_match.orb_max_th, false);
-
-				params_lr_match.max_y_diff				    = iniFile.read_double(sections[2], "max_y_diff", params_lr_match.max_y_diff, false);
-                params_lr_match.orb_max_distance            = iniFile.read_double(sections[2], "orb_max_distance", params_lr_match.orb_max_distance, false);;
 				params_lr_match.min_z						= iniFile.read_double(sections[2], "min_z", params_lr_match.min_z, false);
 				params_lr_match.max_z						= iniFile.read_double(sections[2], "max_z", params_lr_match.max_z, false);
+
+				// sda - limits 
+				params_lr_match.sad_max_ratio				= iniFile.read_double(sections[2], "sad_max_ratio", params_lr_match.sad_max_ratio, false);
+				params_lr_match.sad_max_distance			= iniFile.read_int(sections[2], "sad_max_distance", params_lr_match.sad_max_distance, false);
+
+				// orb - limits
+				params_lr_match.orb_min_th					= iniFile.read_int(sections[2], "orb_min_th", params_lr_match.orb_min_th, false);
+				params_lr_match.orb_max_th					= iniFile.read_int(sections[2], "orb_max_th", params_lr_match.orb_max_th, false);
+				params_lr_match.orb_max_distance            = iniFile.read_double(sections[2], "orb_max_distance", params_lr_match.orb_max_distance, false);
 			}
 
 			if( sections[3].size() > 0 )	// inter-frame matching
 			{
+				// general
+				params_if_match.ifm_method					= static_cast<TInterFrameMatchingParams::TIFMMethod>( iniFile.read_int(sections[3], "if_match_method", 0, false) );
 				params_if_match.filter_fund_matrix			= iniFile.read_bool(sections[3], "filter_fund_matrix", params_if_match.filter_fund_matrix, false);
-				int aux = iniFile.read_int(sections[3], "method", 0, false); 
-				params_if_match.ifm_method					= static_cast<TInterFrameMatchingParams::TIFMMethod>(aux);
+				
+				// window - limits
 				params_if_match.ifm_win_h					= iniFile.read_int(sections[3], "window_height", params_if_match.ifm_win_h, false);
 				params_if_match.ifm_win_w					= iniFile.read_int(sections[3], "window_width", params_if_match.ifm_win_w, false);
-				params_if_match.max_SAD_ratio				= iniFile.read_double(sections[3], "max_SAD_ratio", params_if_match.max_SAD_ratio, false);
-				params_if_match.max_SAD_distance			= iniFile.read_int(sections[3], "max_SAD_distance", params_if_match.max_SAD_distance, false);
-                params_if_match.max_ORB_distance            = iniFile.read_double(sections[3], "max_ORB_distance", params_if_match.max_ORB_distance, false);;
+				
+				// sad - limits
+				params_if_match.sad_max_ratio				= iniFile.read_double(sections[3], "sad_max_ratio", params_if_match.sad_max_ratio, false);
+				params_if_match.sad_max_distance			= iniFile.read_int(sections[3], "sad_max_distance", params_if_match.sad_max_distance, false);
+                
+				// orb - limits
+				params_if_match.orb_max_distance            = iniFile.read_double(sections[3], "orb_max_distance", params_if_match.orb_max_distance, false);;
 			}
+
 			if( sections[4].size() > 0 )	// least squares
 			{
-				params_least_squares.kernel_param			= iniFile.read_double(sections[4], "kernel_param", params_least_squares.kernel_param, false);
-				params_least_squares.max_error_per_obs_px	= iniFile.read_double(sections[4], "max_error_per_obs_px", params_least_squares.max_error_per_obs_px, false);
-				params_least_squares.max_iters				= iniFile.read_int(sections[4], "max_iters", params_least_squares.max_iters, false);
-				params_least_squares.initial_max_iters      = iniFile.read_int(sections[4], "initial_max_iters", params_least_squares.initial_max_iters, false);
-				params_least_squares.max_incr_cost          = iniFile.read_int(sections[4], "max_incr_cost", params_least_squares.max_incr_cost, false);
+				// general
 				params_least_squares.std_noise_pixels		= iniFile.read_double(sections[4], "std_noise_pixels", params_least_squares.std_noise_pixels, false);
-				params_least_squares.residual_threshold		= iniFile.read_double(sections[4], "residual_threshold", params_least_squares.residual_threshold, false);
-				params_least_squares.use_robust_kernel		= iniFile.read_bool(sections[4], "use_robust_kernel", params_least_squares.use_robust_kernel, false);
-				params_least_squares.bad_tracking_th        = iniFile.read_int(sections[4], "bad_tracking_th", params_least_squares.bad_tracking_th, false);
 				params_least_squares.use_previous_pose_as_initial = iniFile.read_bool(sections[4], "use_previous_pose_as_initial", params_least_squares.use_previous_pose_as_initial, false);
+
+				params_least_squares.initial_max_iters      = iniFile.read_int(sections[4], "initial_max_iters", params_least_squares.initial_max_iters, false);
+				params_least_squares.max_iters				= iniFile.read_int(sections[4], "max_iters", params_least_squares.max_iters, false);
+
+				params_least_squares.max_error_per_obs_px	= iniFile.read_double(sections[4], "max_error_per_obs_px", params_least_squares.max_error_per_obs_px, false);
+				params_least_squares.max_incr_cost          = iniFile.read_int(sections[4], "max_incr_cost", params_least_squares.max_incr_cost, false);
+				params_least_squares.residual_threshold		= iniFile.read_double(sections[4], "residual_threshold", params_least_squares.residual_threshold, false);
+				params_least_squares.bad_tracking_th        = iniFile.read_int(sections[4], "bad_tracking_th", params_least_squares.bad_tracking_th, false);
+
+				// robust kernel
+				params_least_squares.use_robust_kernel		= iniFile.read_bool(sections[4], "use_robust_kernel", params_least_squares.use_robust_kernel, false);
+				params_least_squares.kernel_param			= iniFile.read_double(sections[4], "kernel_param", params_least_squares.kernel_param, false);
 			}
 
 			if( sections[5].size() > 0 )	// GUI
@@ -661,7 +684,7 @@ namespace rso
 		} // end loadParamsFromConfigFileName
 
 		/** Sets/resets the match IDs generator */
-		void inline resetIds( const bool reset = true ) { this->m_reset = reset; }
+		void inline resetIds( const bool reset = true ) { m_reset = reset; }
 		void inline setIds( const vector<size_t> & ids ) {	// only for ORB (since it is just one scale)
 			if( this->m_current_imgpair ) {
 				this->m_current_imgpair->lr_pairing_data[0].matches_IDs.resize(ids.size());
@@ -671,7 +694,7 @@ namespace rso
 			}
 			else {
 				this->m_prev_imgpair->lr_pairing_data[0].matches_IDs.resize(ids.size()); 
-				std::copy(ids.begin(), ids.end(), this->m_prev_imgpair->lr_pairing_data[0].matches_IDs.begin()); 
+				std::copy(ids.begin(), ids.end(), m_prev_imgpair->lr_pairing_data[0].matches_IDs.begin()); 
 				//this->m_prev_imgpair->orb_matches_ID.resize(ids.size()); 
 				//std::copy(ids.begin(), ids.end(), this->m_prev_imgpair->orb_matches_ID.begin()); 
 			}
@@ -708,12 +731,12 @@ namespace rso
         size_t                            m_lastID;								//!< Identificator of the last tracked feature
 
 		// matches id management (if 'params_general.vo_use_matches_ids' is set)
-        size_t                            m_num_tracked_pairs_from_last_kf;
-		size_t							  m_num_tracked_pairs_from_last_frame;
-		bool							  m_reset;
-		vector<size_t>					  m_kf_ids;
-		size_t                            m_last_match_ID;						//!< Identificator of the last match ID
-		size_t							  m_kf_max_match_ID;
+        size_t                          m_num_tracked_pairs_from_last_kf;
+		size_t							m_num_tracked_pairs_from_last_frame;
+		bool							m_reset;
+		vector< vector<size_t> >		m_kf_ids;
+		size_t                          m_last_match_ID;						//!< Identificator of the last match ID
+		size_t							m_kf_max_match_ID;
 
 		// orb method: fast detector and orb matching (dynamic) thresholds
 		int								m_current_fast_th;
@@ -738,8 +761,8 @@ namespace rso
 				std::vector<cv::Mat>                          pyr_feats_desc;   //!< ORB Descriptors of the features
 
 				// orb based:
-				std::vector<cv::KeyPoint>                     orb_feats;        //!< ORB based feats, one vector for all the octaves
-				cv::Mat                                       orb_desc;         //!< ORB based descriptors
+				std::vector<cv::KeyPoint>                     orb_feats;        // <----- to be deleted -- //!< ORB based feats, one vector for all the octaves
+				cv::Mat                                       orb_desc;         // <----- to be deleted -- //!< ORB based descriptors
 			};
 
 			mrpt::system::TTimeStamp  timestamp;
@@ -755,7 +778,7 @@ namespace rso
 				/** For this octave, the list of pairings of features: L&R indices as a vector of OpenCV DMatch
 				  * \note It is assumed that pairings are in top-bottom, left-right order
 				  */
-				vector<cv::DMatch>		matches_lr_dm;
+				TDMatchList		matches_lr_dm;
 
 				/** For this octave, a vector with length of number of rows in the images, containing the index of the first
 				  * matched pairs of features in that row. The indices are those found in \a matches_lr and/or \a matches_lr_dm
@@ -773,10 +796,10 @@ namespace rso
 			std::vector<img_pairing_data_t>  lr_pairing_data;
 
 			/** The ORB matches */
-			std::vector<cv::DMatch> orb_matches;
+			std::vector<cv::DMatch> orb_matches;	// <----- to be deleted
 
 			/** The idx of the ORB matches */
-			std::vector<size_t> orb_matches_ID;
+			std::vector<size_t> orb_matches_ID;		// <----- to be deleted
 
 			TImagePairData() : timestamp(INVALID_TIMESTAMP)  { }
 		};
@@ -813,6 +836,13 @@ namespace rso
         
 		/** Performs m_non_max_suppression for the detected features
         */
+		void m_non_max_sup(
+					const vector<cv::KeyPoint>	& keypoints,				// IN
+					vector<bool>				& survivors,				// IN/OUT
+					const size_t				& imgH,						// IN
+					const size_t				& imgW,						// IN
+					const size_t				& num_out_points ) const;	// IN
+
         void m_non_max_sup( TImagePairData::img_data_t &data, size_t octave );	// <-- useless?? consider remove
 		void m_adaptive_non_max_sup(
 					const size_t				& num_out_points,
@@ -829,10 +859,25 @@ namespace rso
 					vector<cv::KeyPoint>		& out_kp_rad,
 					cv::Mat						& out_kp_desc,
 					const size_t				& imgH,
-					const size_t				& imgW );
+					const size_t				& imgW,
+					vector<bool>				& survivors = vector<bool>() );
 
         /** Performs one iteration of a robust Gauss-Newton minimization for the visual odometry
         */
+		bool m_evalRGN(
+				const TKeyPointList					& list1_l,			// input -- left image coords at time 't'
+				const TKeyPointList					& list1_r,			// input -- right image coords at time 't'
+				const TKeyPointList					& list2_l,			// input -- left image coords at time 't+1'
+				const TKeyPointList					& list2_r,			// input -- right image coords at time 't+1'
+				const vector<bool>					& mask,
+				const vector<double>				& deltaPose,        // input -- (w1,w2,w3,t1,t2,t3)
+				const mrpt::utils::TStereoCamera	& stereoCam,		// input -- stereo camera parameters
+				Eigen::MatrixXd						& out_newPose,		// output
+				Eigen::MatrixXd						& out_gradient,
+				vector<double>						& out_residual,
+				double								& out_cost,
+				VOErrorCode							& out_error_code );
+
         bool m_evalRGN(
                 const CStereoOdometryEstimator::TTrackingData	& tracked_feats,
                 const mrpt::utils::TStereoCamera				& cam,

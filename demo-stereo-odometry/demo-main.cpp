@@ -61,17 +61,17 @@ int main(int argc, char**argv)
 
 		// for image directory input
 		TCLAP::ValueArg<std::string> arg_img_dir_cfg_file(
-			"","img_dir",
+			"d","img_dir",
 			"Image directory configuration",false,"","img_dir_cfg.ini",cmd);
 
 		TCLAP::ValueArg<std::string> arg_cam_cfg_file(
-			"","cam",
+			"c","cam",
 			"Configuration file for the camera.\n",
 			false,"","camera.ini",cmd);
 
 		// application parameters
 		TCLAP::ValueArg<std::string> arg_app_cfg_file(
-			"","opt",
+			"o","opt",
 			"Configuration file for the application.\n",
 			false,"","test.ini",cmd);
 
@@ -132,9 +132,9 @@ int main(int argc, char**argv)
 		else
 		{
 			// Run from a set of images in a directory
-			myCam.loadConfig(mrpt::utils::CConfigFile(arg_img_dir_cfg_file.getValue()), "CONFIG" );
+			myCam.loadConfig( mrpt::utils::CConfigFile(arg_img_dir_cfg_file.getValue()), "IMG_DIR" );
 
-			cout << "Running from image directory..." << endl;
+			cout << "Running from image directory... " << endl;
 		}
 
 		// Try to start grabbing images: (will raise an exception on any error)
@@ -148,6 +148,7 @@ int main(int argc, char**argv)
 		paramSections.push_back("RECTIFY");
 		paramSections.push_back("DETECT");
 		paramSections.push_back("MATCH");
+		paramSections.push_back("IF-MATCH");
 		paramSections.push_back("LEAST_SQUARES");
 		paramSections.push_back("GUI");
 		paramSections.push_back("GENERAL");
@@ -201,6 +202,9 @@ int main(int argc, char**argv)
 		while ( !end && (obs=myCam.getNextFrame()).present() )
 		{
 			cout << "Frame: " << ++count << endl;
+
+			if( count == 3 )
+				return 0;
 
 			CStereoOdometryEstimator::TStereoOdometryResult  odom_result;
 

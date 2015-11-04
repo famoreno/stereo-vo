@@ -22,8 +22,6 @@
 #include <libstereo-odometry.h>
 #include "internal_libstereo-odometry.h"
 
-#define SQUARE(_X) _X*_X
-
 using namespace rso;
 
 // computes the jacobian of a set of variables
@@ -251,6 +249,149 @@ void CStereoOdometryEstimator::m_pinhole_stereo_projection(
     } // end-for m
 } // end
 
+bool CStereoOdometryEstimator::m_evalRGN(
+	const TKeyPointList					& list1_l,			// input -- left image coords at time 't'
+	const TKeyPointList					& list1_r,			// input -- right image coords at time 't'
+	const TKeyPointList					& list2_l,			// input -- left image coords at time 't+1'
+	const TKeyPointList					& list2_r,			// input -- right image coords at time 't+1'
+	const vector<bool>					& mask,				// input -- vector with same size as input: true --> use point, false --> not use it
+	const vector<double>				& deltaPose,        // input -- (w1,w2,w3,t1,t2,t3)
+	const mrpt::utils::TStereoCamera	& stereoCam,		// input -- stereo camera parameters
+    Eigen::MatrixXd						& out_newPose,		// output
+    Eigen::MatrixXd						& out_gradient,
+    vector<double>						& out_residual,
+    double								& out_cost,
+	VOErrorCode							& out_error_code )
+{
+	const size_t nL = list1_l.size();						// number of points to project
+	const size_t n_non_masked = std::count( mask.begin(), mask.end(), true );
+
+	ASSERTMSG_(n_non_masked>0,"Number of non masked points entering evaluation of Gauss Newton is zero!")
+
+	// prepare output
+	out_residual.resize(nL,std::numeric_limits<double>::max());						// one residual value for each landmark
+    out_cost		= 0;							// the cost for this iteration
+	out_gradient	= Eigen::MatrixXd::Zero(6,1);
+	out_error_code	= voecNone;
+
+    // prepare variables
+
+    // gradient, jacobian and hessian (both individual and total)
+    Eigen::MatrixXd gi(6,1);
+    Eigen::MatrixXd Ji(4,6);
+    Eigen::MatrixXd Hi(6,6);
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(6,6);
+
+	// 1. Project 'list1' to 3D according to 'stereoCam'
+	// 2. Back project them again to current frame according to 'deltaPose'
+
+	// shortcut to camera parameters
+	const double & cul = stereoCam.leftCamera.cx();
+    const double & cvl = stereoCam.leftCamera.cy();
+    const double & fl  = stereoCam.leftCamera.fx();
+    const double & cur = stereoCam.rightCamera.cx();
+    const double & fr  = stereoCam.rightCamera.fx();
+	const double & baseline = stereoCam.rightCameraPose[0];
+	
+	MRPT_TODO("Optimize evaluation of Gauss-Newton")
+	// 1. Project to 3D
+    vector<TPoint3D> lmks(n_non_masked);
+	const int octave = 0;
+    for( size_t m = 0, i = 0; m < nL; ++m)
+    {
+		if( !mask[m] ) continue;
+
+		const cv::KeyPoint & featL = list1_l[m];
+		const cv::KeyPoint & featR = list1_r[m];
+
+        const double ul  = featL.pt.x;
+        const double vl  = featL.pt.y;
+        const double ur  = featR.pt.x;
+        const double b_d = baseline/(fl*(cur-ur)+fr*(ul-cul));
+
+        lmks[i] = TPoint3D(b_d*fr*(ul-cul),b_d*fr*(vl-cvl),b_d*fl*fr);				// (X,Y,Z)
+		++i;
+    } // end for m
+
+	// 2. Project back to current image
+    vector< pair<TPixelCoordf,TPixelCoordf> > out_pixels;	// left and right coordinates
+    vector<Eigen::MatrixXd> out_jacobian;
+    m_pinhole_stereo_projection( lmks, stereoCam, deltaPose, out_pixels, out_jacobian );
+
+	// 3. Build Gauss-Newton equation system 
+	for( size_t m = 0, i = 0; m < nL; ++m)
+    {
+		if( !mask[m] ) continue;
+
+		if( !m_jacobian_is_good(out_jacobian[i]) ) { ++i; continue; }
+
+		const cv::KeyPoint & featL = list2_l[m];
+		const cv::KeyPoint & featR = list2_r[m];
+
+        // landmark projections on the image
+        const TPixelCoordf & p2D_l = out_pixels[i].first;
+        const TPixelCoordf & p2D_r = out_pixels[i].second;
+
+        // get the jacobian of the 3D->2D projection
+        Ji = out_jacobian[i];
+
+        // residual
+        const double r_left_x  = featL.pt.x-p2D_l.x;  // observation - prediction (left)
+        const double r_left_y  = featL.pt.y-p2D_l.y;  // observation - prediction (left)
+        const double r_right_x = featR.pt.x-p2D_r.x;  // observation - prediction (left)
+        const double r_right_y = featR.pt.y-p2D_r.y;  // observation - prediction (left)
+
+        // the residual vector
+        Eigen::Vector4d ri; ri << r_left_x, r_left_y, r_right_x, r_right_y;
+
+        // input value for the robust kernel function
+        const double s = r_left_x*r_left_x + r_left_y*r_left_y + r_right_x*r_right_x + r_right_y*r_right_y;
+        out_residual[m] = s;
+
+		// use robust kernel
+		// fi = b^2*(sqrt(1+r^2/b^2)-1)
+        double rho_p    = 1;    // derivative of the robust kernel function
+        double fi       = 0;    // individual cost
+        if( params_least_squares.use_robust_kernel )
+        {
+            const double b2     = params_least_squares.kernel_param*params_least_squares.kernel_param;
+            const double n      = sqrt(1+(s/b2));
+            rho_p				= 1/n;         // rho derivative
+            fi					= b2*(n-1);    // individual cost
+        }
+        else
+        {
+            fi = 0.5*s;         // individual cost
+        }
+        out_cost += fi;
+
+        // compute the individual gradient and hessian
+        gi = rho_p*(Ji.transpose()*ri);     // Wi  = eye(4); gi  = rho_p.*(Ji'*Wi*ri);
+        Hi  = Ji.transpose()*Ji;            // Hi  = Ji'*pHi*Ji;
+
+        // add it to the total gradient and hessian
+        out_gradient += gi;
+        H += Hi;
+    } // end-for
+
+    // 4. Solve Gauss-Newton equations
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(H,Eigen::ComputeThinU|Eigen::ComputeThinV);
+    Eigen::VectorXd eValues(6);
+    eValues = svd.singularValues();				// eigen values
+
+    double condNumber = eValues(0)/eValues(5);  // H condition number
+	if( mrpt::math::isNaN(condNumber) )
+	{
+		cout << "ERROR: Condition number is NaN" << endl;
+		cout << "Hessian = [" << endl << H << "]" << endl;
+		m_error = out_error_code = voecBadCondNumber;
+        return false;
+	} // end-if
+	
+	out_newPose = svd.solve(out_gradient); // solve the system H*dx = g
+    return true;
+} // end--m_evalRGN
+
 // evaluate one step of a robust gauss-newton minimization
 bool CStereoOdometryEstimator::m_evalRGN(
     const CStereoOdometryEstimator::TTrackingData	& tracked_feats,	// input
@@ -325,12 +466,11 @@ bool CStereoOdometryEstimator::m_evalRGN(
 
     vector< pair<TPixelCoordf,TPixelCoordf> > out_pixels;
     vector<Eigen::MatrixXd> out_jacobian;
-
     // landmark projections on the image
     m_pinhole_stereo_projection( lmks, cam, deltaPose, out_pixels, out_jacobian );
 
 	FILE *fpred  = NULL;
-	if( this->params_general.vo_save_files )
+	if( params_general.vo_save_files )
 		fpred = mrpt::system::os::fopen(mrpt::format("%s/predictions_%04d_it%d.txt",params_general.vo_out_dir.c_str(),m_it_counter,cnt).c_str(),"wt");
 
     for( size_t m = 0; m < nL; ++m)
@@ -376,7 +516,7 @@ bool CStereoOdometryEstimator::m_evalRGN(
         const double r_right_x = featR.pt.x-p2D_r.x;  // observation - prediction (left)
         const double r_right_y = featR.pt.y-p2D_r.y;  // observation - prediction (left)
 
-		if( this->params_general.vo_save_files )
+		if( params_general.vo_save_files )
 		{
 			mrpt::system::os::fprintf(fpred, "%d %d %d %d %.2f %.2f %.2f %.2f\n", 
 				featL.pt.x, featL.pt.y, featR.pt.x, featR.pt.y,
@@ -428,7 +568,7 @@ bool CStereoOdometryEstimator::m_evalRGN(
 
     } // end-for
 
-	if( this->params_general.vo_save_files )
+	if( params_general.vo_save_files )
 		mrpt::system::os::fclose(fpred);
 
     // build the gauss newton equations
@@ -441,7 +581,7 @@ bool CStereoOdometryEstimator::m_evalRGN(
 	{
 		cout << "ERROR: Condition number is NaN" << endl;
 		cout << "Hessian = [" << endl << H << "]" << endl;
-		this->m_error = out_error_code = voecBadCondNumber;
+		m_error = out_error_code = voecBadCondNumber;
         return false;
 	} // end-if
 
@@ -497,141 +637,146 @@ void CStereoOdometryEstimator::stage5_optimize(
 	const mrpt::utils::TStereoCamera				& stereoCam,
 	TStereoOdometryResult							& result,
 	const vector<double>							& initial_estimation )	// [input] (w1,w2,w3,t1,t2,t3)
- 
-{
+ {
     m_profiler.enter("_stg5");
-    // number of involved landmarks (just in octave 0)
-    const size_t nL = out_tracked_feats.tracked_pairs[0].size();
 
-    // process:
-    // robust gauss newton
-    result.num_it = 0;
-    vector<double> out_residual(nL);
-	double pCost = 0, cCost = 0;
-    bool done = false, abort = false;
-    vector<double> deltaPose(6,0), newDelta(6);
+	const size_t nOctaves = out_tracked_feats.tracked_pairs.size();
 
-	if( this->params_least_squares.use_custom_initial_pose ) // this setting has priority
+	// -- get total number of tracked matches for all the octaves
+	size_t num_total_matches = 0;
+	for( size_t octave = 0; octave < nOctaves; ++octave )
+		num_total_matches += out_tracked_feats.tracked_pairs[octave].size();
+
+	// -- reserve space for the keypoint lists
+	TKeyPointList list1_l, list1_r, list2_l, list2_r;
+	list1_l.reserve(num_total_matches);
+	list1_r.reserve(num_total_matches);
+	list2_l.reserve(num_total_matches);
+	list2_r.reserve(num_total_matches);
+
+	vector< pair<size_t,size_t> > octave_match_idx_vector;
+	octave_match_idx_vector.reserve(num_total_matches);
+		
+	// -- process each octave
+	for( size_t octave = 0; octave < nOctaves; ++octave )
+	{
+		// convert all keypoints to largest scale
+		const size_t scale_norm = std::pow(2,octave);
+		const size_t num_matches_this_octave = out_tracked_feats.tracked_pairs[octave].size();
+		for( size_t i = 0; i < num_matches_this_octave; ++i )
+		{
+			// previous data
+			const size_t pre_match_idx = out_tracked_feats.tracked_pairs[octave][i].first;
+			const size_t pre_kp_left_idx = out_tracked_feats.prev_imgpair->lr_pairing_data[octave].matches_lr_dm[pre_match_idx].queryIdx;
+			const size_t pre_kp_right_idx = out_tracked_feats.prev_imgpair->lr_pairing_data[octave].matches_lr_dm[pre_match_idx].trainIdx;
+
+			list1_l.push_back( out_tracked_feats.prev_imgpair->left.pyr_feats_kps[octave][pre_kp_left_idx] );
+			list1_r.push_back( out_tracked_feats.prev_imgpair->right.pyr_feats_kps[octave][pre_kp_right_idx] );
+			
+			list1_l.back().pt.x *= scale_norm; // scale normalization
+			list1_l.back().pt.y *= scale_norm; // scale normalization
+			list1_r.back().pt.x *= scale_norm; // scale normalization
+			list1_r.back().pt.y *= scale_norm; // scale normalization
+
+			// current data
+			const size_t cur_match_idx = out_tracked_feats.tracked_pairs[octave][i].second;
+			const size_t cur_kp_left_idx = out_tracked_feats.cur_imgpair->lr_pairing_data[octave].matches_lr_dm[cur_match_idx].queryIdx;
+			const size_t cur_kp_right_idx = out_tracked_feats.cur_imgpair->lr_pairing_data[octave].matches_lr_dm[cur_match_idx].trainIdx;
+
+			list2_l.push_back( out_tracked_feats.cur_imgpair->left.pyr_feats_kps[octave][cur_kp_left_idx] );
+			list2_r.push_back( out_tracked_feats.cur_imgpair->right.pyr_feats_kps[octave][cur_kp_right_idx] );
+
+			list2_l.back().pt.x *= scale_norm; // scale normalization
+			list2_l.back().pt.y *= scale_norm; // scale normalization
+			list2_r.back().pt.x *= scale_norm; // scale normalization
+			list2_r.back().pt.y *= scale_norm; // scale normalization
+
+			octave_match_idx_vector.push_back( make_pair(octave,i) );
+		} // end-number-of-matches
+	} // end-octaves
+
+	// non-max-suppression (only left images)
+	// -------------------------------------------
+	vector<bool> survivors(num_total_matches);
+	m_non_max_sup(	list1_l, 
+					survivors,	// this will update 'survivors' vector
+					out_tracked_feats.prev_imgpair->left.pyr.images[0].getHeight(), 
+					out_tracked_feats.prev_imgpair->left.pyr.images[0].getWidth(), 
+					num_total_matches ); 
+
+	if( params_general.vo_save_files )
+	{
+		FILE *f_opt = os::fopen("optimization.txt","wt");
+		for( size_t i = 0; i < survivors.size(); ++i )
+		{
+			if( survivors[i] )
+			{
+				os::fprintf(f_opt,"%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
+					list1_l[i].pt.x,list1_l[i].pt.y,
+					list1_r[i].pt.x,list1_r[i].pt.y,
+					list2_l[i].pt.x,list2_l[i].pt.y,
+					list2_r[i].pt.x,list2_r[i].pt.y );
+			} // end-if
+		} // end-for
+		os::fclose(f_opt);
+	} // end-if
+	mrpt::system::pause();
+
+    // Solve Gauss Newton
+	vector<double>	out_residual;		
+	double			pCost = 0,			// previous cost
+					cCost = 0;			// current cost
+    bool			done = false,		// flags for finishing ...
+					abort = false;		// ... or aborting process
+    vector<double>	deltaPose(6,0);
+    Eigen::MatrixXd	out_newPose(6,1), 
+					out_grad(6,1);
+
+	if( params_least_squares.use_custom_initial_pose ) // this setting has priority
 		deltaPose = initial_estimation;
-	else if( this->params_least_squares.use_previous_pose_as_initial )
+	else if( params_least_squares.use_previous_pose_as_initial )
 		deltaPose = m_last_computed_pose;
 
-	// take this to the header
-#define DUMP_VECTOR(_V) \
-	for(size_t k = 0; k < _V.size()-1; ++k) \
-		cout << _V[k] << ","; \
-	cout << _V[_V.size()-1] << endl;
-
-	if( m_verbose_level >= 2 )
-	{
-		cout << endl << "	Initial estimation (w1,w2,w3,t1,t2,t3) ";
-		if( this->params_least_squares.use_custom_initial_pose )
-		{
-			cout << " (custom): " << endl;
-			DUMP_VECTOR(initial_estimation)
-		}
-		else if( this->params_least_squares.use_previous_pose_as_initial )
-		{
-			cout << " (last): " << endl;
-			DUMP_VECTOR(m_last_computed_pose)
-		}
-	}
-#if 0
-	if(this->params_least_squares.use_previous_pose_as_initial && m_verbose_level >= 2 )
-	{
-		cout << endl << "	Initial estimation (w1,w2,w3,t1,t2,t3): " 
-			<< initial_estimation[0] << ","
-			<< initial_estimation[1] << "," 
-			<< initial_estimation[2] << ","
-			<< initial_estimation[3] << ","
-			<< initial_estimation[4] << ","
-			<< initial_estimation[5] << ","
-			<< endl;
-	}
-#endif
-    Eigen::MatrixXd out_newPose(6,1), out_grad(6,1);
-
-#if 0 // consider removal
-	if( m_it_counter == 9 )
-	{
-		const int hsize = out_tracked_feats.tracked_pairs[0].size()/2;
-		out_tracked_feats.tracked_pairs[0].resize(hsize);
-	}
-#endif
-
-	// 3D landmark prediction
-	// shortcut to camera parameters
-	const double & cul = stereoCam.leftCamera.cx();
-    const double & cvl = stereoCam.leftCamera.cy();
-    const double & fl  = stereoCam.leftCamera.fx();
-    const double & cur = stereoCam.rightCamera.cx();
-    const double & fr  = stereoCam.rightCamera.fx();
-	const double & baseline = stereoCam.rightCameraPose[0];
-
-    vector<TPoint3D> lmks(nL);
-	const int octave = 0;
-    for( size_t m = 0; m < nL; ++m)
-    {
-        // indexes of the matches in the previous step
-        const size_t mpreIdx = out_tracked_feats.tracked_pairs[octave][m].first;
-        TSimpleFeature featL,featR;
-
-		if( params_detect.detect_method == TDetectParams::dmORB || params_detect.detect_method == TDetectParams::dmFAST_ORB )
-        {
-            // left and right feature indexes
-            const size_t lpreIdx = out_tracked_feats.prev_imgpair->orb_matches[mpreIdx].queryIdx;
-            const size_t rpreIdx = out_tracked_feats.prev_imgpair->orb_matches[mpreIdx].trainIdx;
-
-            featL.pt.x = out_tracked_feats.prev_imgpair->left.orb_feats[lpreIdx].pt.x;
-            featL.pt.y = out_tracked_feats.prev_imgpair->left.orb_feats[lpreIdx].pt.y;
-            featR.pt.x = out_tracked_feats.prev_imgpair->right.orb_feats[rpreIdx].pt.x;
-            featR.pt.y = out_tracked_feats.prev_imgpair->right.orb_feats[rpreIdx].pt.y;
-        }
-        else
-        {
-            // left and right feature indexes
-            const size_t lpreIdx = out_tracked_feats.prev_imgpair->lr_pairing_data[octave].matches_lr[mpreIdx].first;
-            const size_t rpreIdx = out_tracked_feats.prev_imgpair->lr_pairing_data[octave].matches_lr[mpreIdx].second;
-
-            featL = out_tracked_feats.prev_imgpair->left.pyr_feats[octave][lpreIdx];
-            featR = out_tracked_feats.prev_imgpair->right.pyr_feats[octave][rpreIdx];
-        }
-
-        const double ul  = featL.pt.x;
-        const double vl  = featL.pt.y;
-        const double ur  = featR.pt.x;
-        const double b_d = baseline/(fl*(cur-ur)+fr*(ul-cul));
-
-        lmks[m] = TPoint3D(b_d*fr*(ul-cul),b_d*fr*(vl-cvl),b_d*fl*fr);				// (X,Y,Z)
-    } // end for m
-
-    // by now: do it just for octave 0
+	//if( m_verbose_level >= 2 )
+	//{
+	//	cout << endl << "	Initial estimation (w1,w2,w3,t1,t2,t3) ";
+	//	if( params_least_squares.use_custom_initial_pose )
+	//	{
+	//		cout << " (custom): " << endl;
+	//		DUMP_VECTOR(initial_estimation)
+	//	}
+	//	else if( params_least_squares.use_previous_pose_as_initial )
+	//	{
+	//		cout << " (last): " << endl;
+	//		DUMP_VECTOR(m_last_computed_pose)
+	//	}
+	//}
+	
 	VOErrorCode out_error_code;
-    unsigned int timesInc = 0;
-    while( result.num_it < int(params_least_squares.initial_max_iters) && !done && !abort )
+    unsigned int timesInc = 0;		// number of times with incremental cost
+    result.num_it = 0;				// iteration counter
+	while( result.num_it < int(params_least_squares.initial_max_iters) && !done && !abort )
     {
         pCost = cCost;
 
         // perform one iteration of the gauss newton process
-        bool cond = m_evalRGN(
-                out_tracked_feats,  // in
-                stereoCam,          // in
-                deltaPose,          // in
-				result.num_it,		// in
-				lmks,				// in
-                out_newPose,        // out
-                out_grad,           // out
-                out_residual,       // out
-                cCost,              // out
-                out_error_code );	// out
-		
-        if( m_verbose_level >= 2 ) printf( "\n	It %d -- COST [stg1]: %.10f\n", result.num_it, cCost );
+		bool cond = m_evalRGN( 
+				list1_l, list1_r, list2_l, list2_r,
+				survivors,				// in --> masks elements to use
+                deltaPose,				// in
+                stereoCam,				// in
+                out_newPose,			// out	--> size 6x1
+                out_grad,				// out	--> size 6x1
+                out_residual,			// out	--> size listXX.size()
+                cCost,					// out	--> scalar
+                result.error_code );	// out	--> scalar
+        
+		if( m_verbose_level >= 2 ) printf( "\n	It %d -- COST [stg1]: %.10f\n", result.num_it, cCost );
         VERBOSE_LEVEL(2) << "	It " << result.num_it << " -- INCR_POSE [stg1] (w1,w2,w3,t1,t2,t3): " << out_newPose.transpose() << endl;
 
         if( !cond )
         {
             result.valid = false;
-			result.error_code = out_error_code;
             return;
         }
 
@@ -672,7 +817,6 @@ void CStereoOdometryEstimator::stage5_optimize(
 
 			if( pCost < cCost )
 			{
-				// cout << "Function cost is not decreasing: " << pCost << " vs " << cCost << endl;
 				if( ++timesInc > params_least_squares.max_incr_cost )
 				{
 					SHOW_WARNING("Function cost has increased too many times!");
@@ -684,7 +828,20 @@ void CStereoOdometryEstimator::stage5_optimize(
         result.num_it ++;
     } // end while iters
 
-    // remove the found outliers!
+    // keep only the inliers!
+	for( size_t i = 0; i < out_residual.size(); ++i )
+    {
+		if( out_residual[i] < params_least_squares.residual_threshold )
+			survivors[i] = false;
+        else
+		{
+			const size_t octave = octave_match_idx_vector[i].first;		// octave
+			const size_t t_idx = octave_match_idx_vector[i].second;		// idx
+			result.outliers.push_back( out_tracked_feats.tracked_pairs[octave][t_idx].second );
+		}
+	} // end-for
+
+#if 0
     CStereoOdometryEstimator::TTrackingData inliers;
     inliers.cur_imgpair     = out_tracked_feats.cur_imgpair;
     inliers.prev_imgpair    = out_tracked_feats.prev_imgpair;
@@ -712,7 +869,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 		}
     }
     VERBOSE_LEVEL(2) << "	Inliers: " << inliers.tracked_pairs[0].size() << endl;
-
+#endif
     // update the tracked IDs (remove outliers)
     // ----------------------------------------------------
 
@@ -721,28 +878,27 @@ void CStereoOdometryEstimator::stage5_optimize(
     // opt1: the final estimation in the previous stage
     // opt2: zero
     // opt3: the initial estimation
-	result.num_it_final = 0;
     done = false, abort = false;
     // for(uint8_t ii = 0; ii < 6; ++ii) deltaPose[ii] = 0;
 	// deltaPose = initial_estimation;
 
+	result.num_it_final = 0;
 	vector<double> out_residual_final;
     while( result.num_it_final < int(params_least_squares.max_iters) && !done && !abort )
     {
         pCost = cCost;
 
         // perform one iteration of the gauss newton process
-        bool cond = m_evalRGN(
-                inliers,			// in
-                stereoCam,          // in
-                deltaPose,          // in
-				1+result.num_it+result.num_it_final,// in
-				lmks2,
-                out_newPose,        // out
-                out_grad,           // out
-                out_residual_final, // out
-                cCost,              // out
-				out_error_code );	// out
+		bool cond = m_evalRGN( 
+				list1_l, list1_r, list2_l, list2_r,
+				survivors,			// in --> masks elements to use
+                deltaPose,			// in
+                stereoCam,			// in
+                out_newPose,		// out	--> size 6x1
+                out_grad,			// out	--> size 6x1
+                out_residual,		// out	--> size listXX.size()
+                cCost,				// out	--> scalar
+                out_error_code );	// out	--> scalar
 
         if( m_verbose_level >= 2 ) printf( "\n	It %d -- COST [ref]: %.10f\n", result.num_it_final, cCost );
         VERBOSE_LEVEL(2) << "	It " << result.num_it_final << " -- INCR_POSE [ref]: " << out_newPose.transpose() << endl;
@@ -751,8 +907,7 @@ void CStereoOdometryEstimator::stage5_optimize(
         {
 			result.out_residual.swap( out_residual );
             result.valid = false;
-			result.error_code = out_error_code;
-            return;
+			return;
         }
 
         // update the pose
@@ -812,7 +967,7 @@ void CStereoOdometryEstimator::stage5_optimize(
     } // end while iters
 
 	// save debug files
-	if( this->params_general.vo_save_files )
+	if( params_general.vo_save_files )
 	{
 		FILE *fresidual = os::fopen(mrpt::format("%s/out_residual_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(),"wt");
 		for( size_t k = 0; k < out_residual.size(); ++k )
@@ -824,12 +979,12 @@ void CStereoOdometryEstimator::stage5_optimize(
 		mrpt::system::os::fclose(fresidual);
 	}
 
-    // by now, deltaPose has the inverse of the change in pose between time steps
+    // at this point, deltaPose has the inverse of the change in pose between time steps
     // deltaPose = [w1,w2,w3,t1,t2,t3]
     CPose3DRotVec rvt(deltaPose[0],deltaPose[1],deltaPose[2],deltaPose[3],deltaPose[4],deltaPose[5]);
 	result.outPose = CPose3D(rvt.getInverse()); // this is the pose of the current stereo frame wrt the previous one
 
-    if( !this->params_least_squares.use_custom_initial_pose && this->params_least_squares.use_previous_pose_as_initial )
+    if( !params_least_squares.use_custom_initial_pose && params_least_squares.use_previous_pose_as_initial )
 	{
 		m_last_computed_pose = deltaPose;
 		cout << "	Saving 'm_last_computed_pose': ";
@@ -838,8 +993,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 	VERBOSE_LEVEL(2) << "   :: OUTPOSE: " << result.outPose << endl;
 
     // set output result
-	result.tracked_feats_from_last_KF		= this->m_num_tracked_pairs_from_last_kf;
-    result.tracked_feats_from_last_frame	= this->m_num_tracked_pairs_from_last_frame;
+    result.tracked_feats_from_last_frame	= m_num_tracked_pairs_from_last_frame;
 	result.out_residual.swap( out_residual );
     result.valid = !abort;
 

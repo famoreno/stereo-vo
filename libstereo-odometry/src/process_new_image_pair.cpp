@@ -43,12 +43,26 @@ void CStereoOdometryEstimator::processNewImagePair(
 	result.error_code = voecNone;
 
 	// take this to the constructor or the initialization (not to be done every time!)
-	string detect_method_str;
+	string detect_method_str, st_match_method_str, if_match_method_str;
 	switch( params_detect.detect_method )
 	{
-		case TDetectParams::dmORB : detect_method_str = "[ORB]"; break;
-		case TDetectParams::dmFASTER : detect_method_str = "[FASTER]"; break;
-		case TDetectParams::dmFAST_ORB : detect_method_str = "[FAST + ORB]"; break;
+		case TDetectParams::dmORB		: detect_method_str = "[ORB]"; break;
+		case TDetectParams::dmFASTER	: detect_method_str = "[FASTER]"; break;
+		case TDetectParams::dmFAST_ORB	: detect_method_str = "[FAST + ORB]"; break;
+		case TDetectParams::dmKLT		: detect_method_str = "[KLT]"; break;
+	}
+	switch( params_lr_match.match_method )
+	{
+		case TLeftRightMatchParams::smDescBF	: st_match_method_str = "[ORB Descriptor Brute-Force]"; break;
+		case TLeftRightMatchParams::smDescRbR	: st_match_method_str = "[ORB Descriptor Row-by-row]"; break;
+		case TLeftRightMatchParams::smSAD		: st_match_method_str = "[SAD]"; break;
+	}
+	switch( params_if_match.ifm_method )
+	{
+		case TInterFrameMatchingParams::ifmDescBF		: if_match_method_str = "[ORB Descriptor Brute-Force]"; break;
+		case TInterFrameMatchingParams::ifmDescWin		: if_match_method_str = "[ORB Descriptor in a window]"; break;
+		case TInterFrameMatchingParams::ifmOpticalFlow	: if_match_method_str = "[Optical flow]"; break;
+		case TInterFrameMatchingParams::ifmSAD			: if_match_method_str = "[SAD in a window]"; break;
 	}
 	// ----------------------------------------------------------------
 
@@ -59,14 +73,16 @@ void CStereoOdometryEstimator::processNewImagePair(
 	// -------------------------------------------
 	// 0) Shift the list of two previous images:
 	// -------------------------------------------
-	if( !request_data.repeat && this->m_error != voecBadTracking && this->m_error != voecBadCondNumber ) // !this->m_error_in_tracking )
+	if( !request_data.repeat && 
+		m_error != voecBadTracking && 
+		m_error != voecBadCondNumber )
 		m_prev_imgpair = m_current_imgpair;   // these are smart pointers, so it only implies copying a pointer
 
 	if( request_data.repeat )
-		cout << "[sVO] Repeating... " << endl;
+	{	VERBOSE_LEVEL(1) << "[sVO] Repeating (no swapping) ... " << endl;	}
 
-	this->m_error_in_tracking = false;
-	this->m_error = voecNone;
+	m_error_in_tracking = false;
+	m_error = voecNone;
 
 	// -------------------------------------------
 	// 1) Prepare new image pair:
@@ -75,110 +91,157 @@ void CStereoOdometryEstimator::processNewImagePair(
 	TImagePairData & cur_imgpair = *m_current_imgpair;
 
     VERBOSE_LEVEL(1) << "[sVO] RECTIFYING... ";
-	this->stage1_prepare_rectify( request_data, cur_imgpair );
+	stage1_prepare_rectify( request_data, cur_imgpair );
 	VERBOSE_LEVEL(1) << endl << "	done" << endl;
 	
+	// number of octaves
+	const size_t nOctaves = cur_imgpair.left.pyr.images.size();
+	
 	// "copyFastFrom" has "move semantics", so the original input images are no longer available to subsequent stages:
-	if( !request_data.repeat && !this->m_error_in_tracking )
+	if( !request_data.repeat && 
+		!m_error_in_tracking )
 	{
 		mrpt::obs::CObservationStereoImages *stObs = const_cast<mrpt::obs::CObservationStereoImages*>(request_data.stereo_imgs.pointer());
+		
+		// gui info
 		m_next_gui_info->timestamp = stObs->timestamp;
 		m_next_gui_info->img_left.swap( stObs->imageLeft );
 		m_next_gui_info->img_right.swap( stObs->imageRight );
 	}
-	else
-		cout << "no swapping" << endl;
 
 	if( m_prev_imgpair )
-	{
-		VERBOSE_LEVEL(2) << "[sVO] Image Timestamps -- PRE:" << m_prev_imgpair->timestamp << " and CUR: " << m_next_gui_info->timestamp << endl;
-	}
+	{	VERBOSE_LEVEL(2) << "[sVO] Image Timestamps -- PRE:" << m_prev_imgpair->timestamp << " and CUR: " << m_next_gui_info->timestamp << endl;	}
 	else
-	{
-		VERBOSE_LEVEL(2) << "[sVO] Image Timestamps -- PRE: None and CUR: " << m_next_gui_info->timestamp << endl;
-	}
-    // -------------------------------------------
+	{	VERBOSE_LEVEL(2) << "[sVO] Image Timestamps -- PRE: None and CUR: " << m_next_gui_info->timestamp << endl;	}
+    
+	// -------------------------------------------
 	// 2) Detect features:
 	// -------------------------------------------
-    VERBOSE_LEVEL(1) << "[sVO] DETECTING FEATURES... " << detect_method_str;
+    VERBOSE_LEVEL(1) << "[sVO] DETECTING FEATURES... with " << detect_method_str;
     if( request_data.use_precomputed_data )
     {
-        VERBOSE_LEVEL(2) << endl << "   [sVO] Use precomputed data" << endl;
+        VERBOSE_LEVEL(2) << endl << "	[sVO] Use precomputed data" << endl;
 
-        // somebody already computed the ORB features --> just copy them into this engine
+        // somebody already computed the features --> just copy them into this engine
 		//	-- left and right features
 		ASSERT_( request_data.precomputed_left_feats && request_data.precomputed_right_feats )
-        cur_imgpair.left.orb_feats.resize( request_data.precomputed_left_feats->size() );
-		std::copy( request_data.precomputed_left_feats->begin(), request_data.precomputed_left_feats->end(), cur_imgpair.left.orb_feats.begin() );
+		ASSERT_( request_data.precomputed_left_feats->size() == request_data.precomputed_right_feats->size() )
+		ASSERTMSG_( request_data.precomputed_left_feats->size() == nOctaves, "Number of octaves in precomputed data does not match number of octaves in the system (params_rectify.nOctaves)" )
 
-		cur_imgpair.right.orb_feats.resize( request_data.precomputed_right_feats->size() );
-        std::copy( request_data.precomputed_right_feats->begin(), request_data.precomputed_right_feats->end(), cur_imgpair.right.orb_feats.begin() );
+		cur_imgpair.left.pyr_feats_kps.resize(nOctaves);
+		cur_imgpair.left.pyr_feats_desc.resize(nOctaves);
+		cur_imgpair.right.pyr_feats_kps.resize(nOctaves);
+		cur_imgpair.right.pyr_feats_desc.resize(nOctaves);
 
-        //	-- left and right descriptors
-		ASSERT_( request_data.precomputed_left_desc && request_data.precomputed_right_desc )
-        request_data.precomputed_left_desc->copyTo( cur_imgpair.left.orb_desc );
-        request_data.precomputed_right_desc->copyTo( cur_imgpair.right.orb_desc );
+		for( size_t octave = 0; octave = nOctaves; ++octave )
+		{
+			// left
+			cur_imgpair.left.pyr_feats_kps[octave].resize( request_data.precomputed_left_feats->size() );
+			std::copy( request_data.precomputed_left_feats->operator[](octave).begin(), request_data.precomputed_left_feats->operator[](octave).end(), cur_imgpair.left.pyr_feats_kps[octave].begin() );
 
-        const size_t nPyrs = cur_imgpair.left.pyr.images.size();
-        cur_imgpair.left.pyr_feats.resize(nPyrs);
-        cur_imgpair.right.pyr_feats.resize(nPyrs);
+			// right 
+			cur_imgpair.right.pyr_feats_kps[octave].resize( request_data.precomputed_right_feats->size() );
+			std::copy( request_data.precomputed_right_feats->operator[](octave).begin(), request_data.precomputed_right_feats->operator[](octave).end(), cur_imgpair.right.pyr_feats_kps[octave].begin() );
 
+			//	-- left and right descriptors
+			ASSERT_( request_data.precomputed_left_desc && request_data.precomputed_right_desc )
+			
+			request_data.precomputed_left_desc->operator[](octave).copyTo( cur_imgpair.left.pyr_feats_desc[octave] );
+			request_data.precomputed_right_desc->operator[](octave).copyTo( cur_imgpair.right.pyr_feats_desc[octave] );
+		} // end-for-octaves
     } // end-if
     else
     {
-        VERBOSE_LEVEL(2) << endl << "   [sVO] Full process" << endl;
-        this->stage2_detect_features( cur_imgpair.left, m_next_gui_info->img_left );
-        this->stage2_detect_features( cur_imgpair.right, m_next_gui_info->img_right );
+        VERBOSE_LEVEL(2) << endl << "	[sVO] Full process" << endl;
+        stage2_detect_features( cur_imgpair.left, m_next_gui_info->img_left );
+        stage2_detect_features( cur_imgpair.right, m_next_gui_info->img_right );
     } // end-else
 
-	result.detected_feats.first = cur_imgpair.left.orb_feats.size();
-	result.detected_feats.second = cur_imgpair.right.orb_feats.size();
-
-	if( this->params_general.vo_save_files )
+	// fill the output structure
+	result.detected_feats.resize(nOctaves);
+	for(int i = 0; i < nOctaves; ++i )
 	{
-		FILE *f1 = mrpt::system::os::fopen( mrpt::format("%s/left_feats_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(), "wt");
-		for( vector<cv::KeyPoint>::iterator it = cur_imgpair.left.orb_feats.begin(); it != cur_imgpair.left.orb_feats.end(); ++it )
-			mrpt::system::os::fprintf(f1, "%.2f %.2f\n", it->pt.x, it->pt.y );
-		mrpt::system::os::fclose(f1);
-
-		FILE *f2 = mrpt::system::os::fopen( mrpt::format("%s/right_feats_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(), "wt");
-		for( vector<cv::KeyPoint>::iterator it = cur_imgpair.right.orb_feats.begin(); it != cur_imgpair.right.orb_feats.end(); ++it )
-			mrpt::system::os::fprintf(f2, "%.2f %.2f\n", it->pt.x, it->pt.y );
-		mrpt::system::os::fclose(f2);
+		result.detected_feats[i].first	= cur_imgpair.left.pyr_feats_kps[i].size();
+		result.detected_feats[i].second = cur_imgpair.right.pyr_feats_kps[i].size();
 	}
-	if( params_detect.detect_method == TDetectParams::dmORB || params_detect.detect_method == TDetectParams::dmFAST_ORB )
-	{	VERBOSE_LEVEL(1) << endl << "	done: (FAST Th: " << m_current_fast_th << "): Detected keypoints: [" << cur_imgpair.left.orb_feats.size() << "," << cur_imgpair.right.orb_feats.size() << "]" << endl; }
-	else
-	{	VERBOSE_LEVEL(1) << endl << "	done: Detected keypoints: [" << cur_imgpair.left.pyr_feats[0].size() << "," << cur_imgpair.right.pyr_feats[0].size() << "]" << endl; }
+
+	// save data in text files
+	if( params_general.vo_save_files )
+	{
+		FILE *f = mrpt::system::os::fopen( mrpt::format("%s/left_feats_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(), "wt");
+		for( size_t octave = 0; octave < nOctaves; ++octave )
+		{
+			for( vector<cv::KeyPoint>::iterator it = cur_imgpair.left.pyr_feats_kps[octave].begin(); it != cur_imgpair.left.pyr_feats_kps[octave].end(); ++it )
+				mrpt::system::os::fprintf(f, "%d %.2f %.2f %.8f\n", octave, it->pt.x, it->pt.y, it->response );
+
+			cv::FileStorage file( mrpt::format("%s/left_desc_o%02d_%04d.yml",params_general.vo_out_dir.c_str(),octave,m_it_counter).c_str(), cv::FileStorage::WRITE);
+			file << "leftDescMat" << cur_imgpair.left.pyr_feats_desc[octave];
+			file.release();
+		}
+		mrpt::system::os::fclose(f);
+
+		f = mrpt::system::os::fopen( mrpt::format("%s/right_feats_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(), "wt");
+		for( size_t octave = 0; octave < nOctaves; ++octave )
+		{
+			for( vector<cv::KeyPoint>::iterator it = cur_imgpair.right.pyr_feats_kps[octave].begin(); it != cur_imgpair.right.pyr_feats_kps[octave].end(); ++it )
+				mrpt::system::os::fprintf(f, "%d %.2f %.2f %.8f\n", octave, it->pt.x, it->pt.y, it->response );
+
+			cv::FileStorage file( mrpt::format("%s/right_desc_o%02d_%04d.yml",params_general.vo_out_dir.c_str(),octave,m_it_counter).c_str(), cv::FileStorage::WRITE);
+			file << "rightDescMat" << cur_imgpair.right.pyr_feats_desc[octave];
+			file.release();
+		}
+		mrpt::system::os::fclose(f);
+	}
+	VERBOSE_LEVEL(1) << "	done: " << endl;
+	if( m_verbose_level >= 1 )
+		for( size_t octave = 0; octave < nOctaves; ++octave )
+			cout << "		Octave " << octave << " -> [" << cur_imgpair.left.pyr_feats_kps[octave].size() << "," << cur_imgpair.right.pyr_feats_kps[octave].size() << "] detected keypoints." << endl; 
+
+	if( params_detect.detect_method == TDetectParams::dmORB )
+	{	VERBOSE_LEVEL(2) << "	Current FAST threshold: " << m_current_fast_th << endl;	}
+
+	VERBOSE_LEVEL(1) << endl;
 
 	// -------------------------------------------
 	// 3) Match L/R:
 	// -------------------------------------------
-	VERBOSE_LEVEL(1) << "[sVO] STEREO MATCHING... " << detect_method_str;
+	VERBOSE_LEVEL(1) << "[sVO] STEREO MATCHING... with " << st_match_method_str << endl;
 	if( request_data.use_precomputed_data )
     {
         ASSERT_( request_data.precomputed_matches )
 
-        // the ORB features have been already matched --> just copy them into this engine
+        // the features have been already matched --> just copy them into this engine
 		//	-- matches
-        cur_imgpair.orb_matches.resize( request_data.precomputed_matches->size() );
-        std::copy( request_data.precomputed_matches->begin(), request_data.precomputed_matches->end(), cur_imgpair.orb_matches.begin() );
+		cur_imgpair.lr_pairing_data.resize(nOctaves);
+		for(size_t octave = 0; octave < nOctaves; ++octave)
+		{
+			cur_imgpair.lr_pairing_data[octave].matches_lr_dm.resize( request_data.precomputed_matches->operator[](octave).size() );
+			std::copy( request_data.precomputed_matches->operator[](octave).begin(), request_data.precomputed_matches->operator[](octave).end(), cur_imgpair.lr_pairing_data[octave].matches_lr_dm.begin() );
+		}
 
 		// if wanted, copy also the IDs of the matches
 		if( params_general.vo_use_matches_ids )
 		{
 			ASSERT_( request_data.precomputed_matches_ID )
-			cur_imgpair.lr_pairing_data[0].matches_IDs.resize( request_data.precomputed_matches_ID->size() );
-			std::copy( request_data.precomputed_matches_ID->begin(), request_data.precomputed_matches_ID->end(), cur_imgpair.lr_pairing_data[0].matches_IDs.begin() );
+			m_last_match_ID = 0;
+			for( size_t octave = 0; octave < nOctaves; ++octave )
+			{
+				cur_imgpair.lr_pairing_data[octave].matches_IDs.resize( request_data.precomputed_matches_ID->operator[](octave).size() );
+				std::copy( request_data.precomputed_matches_ID->operator[](octave).begin(), request_data.precomputed_matches_ID->operator[](octave).end(), cur_imgpair.lr_pairing_data[octave].matches_IDs.begin() );
+				
+				// get the maximum match ID
+				m_last_match_ID = std::max(m_last_match_ID, *std::max_element(cur_imgpair.lr_pairing_data[octave].matches_IDs.begin(), cur_imgpair.lr_pairing_data[octave].matches_IDs.end()) );
+			}
+			
 			//cur_imgpair.orb_matches_ID.resize( request_data.precomputed_matches_ID->size() );
 			//std::copy( request_data.precomputed_matches_ID->begin(), request_data.precomputed_matches_ID->end(), cur_imgpair.orb_matches_ID.begin() );
 
-			this->m_kf_ids.resize( request_data.precomputed_matches_ID->size() );
-			std::copy( request_data.precomputed_matches_ID->begin(), request_data.precomputed_matches_ID->end(), this->m_kf_ids.begin() );
+			//m_kf_ids.resize( request_data.precomputed_matches_ID->size() );
+			//std::copy( request_data.precomputed_matches_ID->begin(), request_data.precomputed_matches_ID->end(), m_kf_ids.begin() );
 
 			// set the maximum match ID and the maximum match ID from the last KF
-			//this->m_last_match_ID = this->m_kf_max_match_ID = *cur_imgpair.orb_matches_ID.rbegin();					// must be the last
-			this->m_last_match_ID = this->m_kf_max_match_ID = *cur_imgpair.lr_pairing_data[0].matches_IDs.rbegin();		// must be the last
+			//m_last_match_ID = m_kf_max_match_ID = *cur_imgpair.orb_matches_ID.rbegin();					// must be the last
+			//m_last_match_ID = m_kf_max_match_ID = *cur_imgpair.lr_pairing_data[0].matches_IDs.rbegin();		// must be the last
 		} // end-if
 		else
 		{
@@ -188,37 +251,63 @@ void CStereoOdometryEstimator::processNewImagePair(
     } // end-if
 	else
 	{
-		if( this->m_reset )
+		if( m_reset )
 		{
-			// in RESET flag is set
-			//		clear the IDs from the previous frame and reset them to the range 0...N-1
-			//		set the maximum match IDs
-			const size_t num_p_matches = this->m_prev_imgpair->orb_matches.size();
-			this->m_last_match_ID = this->m_kf_max_match_ID = num_p_matches-1;
-			this->m_kf_ids.resize( num_p_matches );
+			// When RESET flag is set
+			//		- clear the IDs from the previous frame and reset them to the range 0...N-1
+			//		- set the maximum match IDs
+			//		- set this frame as keyframe (for keeping track of the ids)
+			size_t current_match_id = 0;
+			for( size_t octave = 0; octave < nOctaves; ++octave )
+				for( size_t m = 0; m < m_prev_imgpair->lr_pairing_data[octave].matches_IDs.size(); ++m )
+					m_prev_imgpair->lr_pairing_data[octave].matches_IDs[m] = current_match_id++;
+			m_last_match_ID = current_match_id;
+			m_reset = false;
+
+			/** /
+			const size_t num_p_matches = m_prev_imgpair->orb_matches.size();
+			m_last_match_ID = m_kf_max_match_ID = num_p_matches-1;
+			m_kf_ids.resize( num_p_matches );
 			for( size_t m = 0; m < num_p_matches; ++m )
-				this->m_kf_ids[m] = this->m_prev_imgpair->lr_pairing_data[0].matches_IDs[m] = m; //this->m_kf_ids[m] = this->m_prev_imgpair->orb_matches_ID[m] = m;
-			this->m_reset = false;													// unset RESET flag
+				m_kf_ids[m] = m_prev_imgpair->lr_pairing_data[0].matches_IDs[m] = m; //m_kf_ids[m] = m_prev_imgpair->orb_matches_ID[m] = m;
+			m_reset = false;													// unset RESET flag
+			/**/
 		}
 
-		this->stage3_match_left_right( cur_imgpair, request_data.stereo_cam );
+		stage3_match_left_right( cur_imgpair, request_data.stereo_cam );
 
 	} // end-else
 
-	result.stereo_matches = cur_imgpair.orb_matches.size();
+	// fill the result struct
+	result.stereo_matches.resize(nOctaves);
+	for( size_t octave = 0; octave < nOctaves; octave++)
+		result.stereo_matches[octave] = cur_imgpair.lr_pairing_data[octave].matches_lr_dm.size();
 
-	if( this->params_general.vo_save_files )
+	if( params_general.vo_save_files )
 	{
 		FILE *f = mrpt::system::os::fopen( mrpt::format("%s/matches_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(), "wt");
-		for( vector<cv::DMatch>::iterator it = this->m_current_imgpair->orb_matches.begin(); it != this->m_current_imgpair->orb_matches.end(); ++it )
-			mrpt::system::os::fprintf(f, "%d %d %.2f\n",it->queryIdx, it->trainIdx, it->distance);
+		for( size_t octave = 0; octave < nOctaves; ++octave )
+		{
+			for( vector<cv::DMatch>::iterator it = m_current_imgpair->lr_pairing_data[octave].matches_lr_dm.begin(); it != m_current_imgpair->lr_pairing_data[octave].matches_lr_dm.end(); ++it )
+				mrpt::system::os::fprintf(f, "%d %d %d %.2f\n", octave, it->queryIdx, it->trainIdx, it->distance);
+		}
 		mrpt::system::os::fclose(f);
 	}
 
-	if( params_detect.detect_method == TDetectParams::dmORB || params_detect.detect_method == TDetectParams::dmFAST_ORB )
-	{	VERBOSE_LEVEL(1) << endl << "	done: (ORB Th:" << m_current_orb_th << ") [" << cur_imgpair.orb_matches.size() << " matches]" << endl; }
-	else
-	{	VERBOSE_LEVEL(1) << endl << "	done: [" << cur_imgpair.lr_pairing_data[0].matches_lr.size() << " matches]" << endl; }
+	VERBOSE_LEVEL(1) << "	done: " << endl;
+	if( m_verbose_level >= 1 )
+	{
+		for( size_t octave = 0; octave < nOctaves; ++octave )
+			cout << "		Octave " << octave << " -> [" << cur_imgpair.lr_pairing_data[octave].matches_lr_dm.size() << "] stereo matches found." << endl; 
+	
+		if( params_lr_match.match_method == TLeftRightMatchParams::smDescBF || 
+			params_lr_match.match_method == TLeftRightMatchParams::smDescRbR )
+			cout << "	ORB threshold: " << m_current_orb_th << endl;				// this is dynamic
+		else if( params_lr_match.match_method == TLeftRightMatchParams::smSAD )
+			cout << "	SAD threshold: " << params_lr_match.sad_max_distance << endl;	// this is not dynamic (by now)
+		
+		cout << endl;
+	}
 
 	//	:: Only if this is not the first step:
 	if( m_prev_imgpair.present() && m_current_imgpair.present() )
@@ -227,32 +316,38 @@ void CStereoOdometryEstimator::processNewImagePair(
 		// 4) Match consecutive stereo images:
 		// -------------------------------------------
 		TTrackingData tracking_data;
-		TImagePairData &prev_imgpair = *m_prev_imgpair;
+		TImagePairData & prev_imgpair = *m_prev_imgpair;
 
-		VERBOSE_LEVEL(1) << "[sVO] TRACKING... " << detect_method_str;
-        this->stage4_track( tracking_data, prev_imgpair, cur_imgpair );
-		VERBOSE_LEVEL(1) << endl << "	done: [" << this->m_num_tracked_pairs_from_last_frame << "/"
-			<< this->m_num_tracked_pairs_from_last_kf << " tracked from last Frame/KF]" << endl;
+		VERBOSE_LEVEL(1) << "[sVO] TRACKING... with " << if_match_method_str;
+        stage4_track( tracking_data, prev_imgpair, cur_imgpair );
+		VERBOSE_LEVEL(1) << endl << "	done: " << endl;
+		if( m_verbose_level >= 1 )
+		{
+			for( size_t octave = 0; octave < nOctaves; ++octave )
+				cout << "		Octave " << octave << " -> [" << tracking_data.tracked_pairs[octave].size() << "] tracked feats." << endl; 
+			cout << "		Total: " << m_num_tracked_pairs_from_last_frame << endl;
+		}
 
 		// -------------------------------------------
 		// 4.1) Robustness stage --> Check tracking
 		// -------------------------------------------
-		if( this->m_num_tracked_pairs_from_last_frame < this->params_least_squares.bad_tracking_th )
+		if( m_num_tracked_pairs_from_last_frame < params_least_squares.bad_tracking_th )
 		{
-			this->m_error_in_tracking = true;
-			this->m_error = result.error_code = voecBadTracking;
+			m_error_in_tracking = true;
+			m_error = result.error_code = voecBadTracking;
 		}
 
-		if( this->m_error != voecBadTracking ) // !this->m_error_in_tracking )
+		if( m_error != voecBadTracking ) 
 		{
 			// -------------------------------------------
 			// 5) Optimize incremental pose:
 			// -------------------------------------------
-			VERBOSE_LEVEL(1) << "[sVO] LEAST SQUARES... " << detect_method_str;
-			this->stage5_optimize( tracking_data, request_data.stereo_cam, result );
+			VERBOSE_LEVEL(1) << "[sVO] LEAST SQUARES... ";
+			stage5_optimize( tracking_data, request_data.stereo_cam, result );
 			VERBOSE_LEVEL(1) << endl << "	done: [Resulting pose: " << result.outPose << "]" << endl;
 
 		} // end-if
+
 		if( result.error_code != voecNone )
 		{
 			DUMP_VO_ERROR_CODE(result.error_code)
@@ -293,6 +388,6 @@ void CStereoOdometryEstimator::processNewImagePair(
 	if( !request_data.repeat )
 		++m_it_counter;
 
-	if( this->params_general.vo_pause_it )
+	if( params_general.vo_pause_it )
 		mrpt::system::pause();
 }

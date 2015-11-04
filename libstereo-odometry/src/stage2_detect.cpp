@@ -48,6 +48,7 @@ CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 	non_maximal_suppression(true),
 	KLT_win(4),
 	minimum_KLT_response(10),
+	minimum_ORB_response(0.005),
 	detect_method(dmFASTER),
 	nmsMethod(nmsmStandard),
 	orb_nfeats(500),
@@ -64,7 +65,10 @@ CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & data, size_t octave, const bool order = true )
 {
 	// preliminary assertions
-	ASSERTDEBMSG_(octave < data.pyr_feats_index[octave].size(),"Input 'octave' value is larger than pyramid size")
+	ASSERTDEBMSG_(octave < data.pyr_feats_index.size(),"Input 'octave' value is larger than pyramid size")
+
+	// 0. prepare row-index vector
+	data.pyr_feats_index[octave].resize(data.pyr.images[octave].getHeight());
 
 	// 0. order features 
 	if( order )
@@ -74,7 +78,7 @@ void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & da
 		const size_t	N		= list.size();
 
 		TKeyPointList aux_list(N);
-		Mat aux_desc; // (desc.rows,desc.cols,desc.type());
+		Mat aux_desc(desc.rows,desc.cols,desc.type());
 
 		// First: order them by row
 		vector<size_t> sorted_indices( N );
@@ -84,7 +88,7 @@ void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & da
 		for(size_t i = 0; i < N; ++i)
 		{
 			aux_list[i]		= list[sorted_indices[i]];
-			aux_desc.row(i) = desc.row(sorted_indices[i]);
+			desc.row(sorted_indices[i]).copyTo(aux_desc.row(i));
 		} // end-for
 
 		// swap lists
@@ -97,9 +101,9 @@ void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & da
 
     size_t feats_till_now = 0;
     size_t current_row = 0;
-    for( size_t idx_feats = 0; idx_feats < data.pyr_feats[octave].size(); ++idx_feats)
+    for( size_t idx_feats = 0; idx_feats < data.pyr_feats_kps[octave].size(); ++idx_feats)
     {
-		const KeyPoint &feat = data.pyr_feats_kps[octave][idx_feats];
+		const KeyPoint & feat = data.pyr_feats_kps[octave][idx_feats];
         if( idx_feats == 0 )
         {
             current_row = feat.pt.y;
@@ -144,7 +148,8 @@ void CStereoOdometryEstimator::m_adaptive_non_max_sup(
 	/**/
 
 	const size_t actual_num_out_points = min(num_out_points,keypoints.size());
-	
+	if( actual_num_out_points == 0 ) return; // nothing to do here
+
 	const double CROB = 0.9;
 	const size_t N = keypoints.size();
 
@@ -183,7 +188,6 @@ void CStereoOdometryEstimator::m_adaptive_non_max_sup(
 		} // end-for-k2
 		radius[sorted_indices[k1]] = min_ri;
 	} // end-for-k1
-	// cout << endl;
 
 	// sort again according to the radius
 	const double min_radius_th_2 = min_radius_th*min_radius_th;
@@ -191,13 +195,12 @@ void CStereoOdometryEstimator::m_adaptive_non_max_sup(
 	std::sort( sorted_indices.begin(), sorted_indices.end(), KpRadiusSorter(radius) );
 	
 	// fill ouput
-	// cout << "fill output " << endl;
 	out_kp_rad.clear();
 	out_kp_rad.reserve( N );
 	const bool use_desc = descriptors.size() != cv::Size(0,0);
 	if( use_desc )
 	{
-		ASSERTDEBMSG_( keypoints.size() == descriptors.rows, format("Keypoints and descriptors do not have the same size: %d vs %d",keypoints.size(),descriptors.rows ); )
+		ASSERTDEBMSG_( keypoints.size() == descriptors.rows, format("Keypoints and descriptors do not have the same size: %d vs %d",keypoints.size(),descriptors.rows ).c_str() )
 		out_kp_desc.reserve( N );
 	}
 	for( size_t i = 0; i < actual_num_out_points; i++ ) 
@@ -208,7 +211,6 @@ void CStereoOdometryEstimator::m_adaptive_non_max_sup(
 			if( use_desc ) out_kp_desc.push_back( descriptors.row( sorted_indices[i] ) );
 		}
 	}
-	// cout << "done" << endl;
 	// save after
 	/** /
 	{
@@ -408,6 +410,67 @@ void CStereoOdometryEstimator::m_non_max_sup( TImagePairData::img_data_t &data, 
     //} // end for nRowsMax
 
 } // end m_non_max_sup
+
+void CStereoOdometryEstimator::m_non_max_sup(
+					const vector<KeyPoint>		& keypoints,				// IN
+					vector<bool>				& survivors,				// IN/OUT
+					const size_t				& imgH,						// IN
+					const size_t				& imgW,						// IN
+					const size_t				& num_out_points			// IN (maximum number of points)
+					)	const	
+{
+	//  1) Sort the features by "response": It's ~100 times faster to sort a list of
+	//      indices "sorted_indices" than sorting directly the actual list of features "cv_feats"
+	const size_t n_feats = keypoints.size();
+			
+	//prepare output
+	survivors.resize(n_feats,false);
+
+	std::vector<size_t> sorted_indices(n_feats);
+	for( size_t i = 0; i < n_feats; i++ )  sorted_indices[i]=i;
+	std::sort( sorted_indices.begin(), sorted_indices.end(), KeypointResponseSorter< vector<KeyPoint> >(keypoints) );
+
+	//  2) Filter by "min-distance" (in options.ORBOptions.min_distance)
+	// The "min-distance" filter is done by means of a 2D binary matrix where each cell is marked when one
+	// feature falls within it. This is not exactly the same than a pure "min-distance" but is pretty close
+	// and for large numbers of features is much faster than brute force search of kd-trees.
+	// (An intermediate approach would be the creation of a mask image updated for each accepted feature, etc.)
+	const unsigned int occupied_grid_cell_size = params_detect.min_distance/2.0;
+	const float occupied_grid_cell_size_inv = 1.0f/occupied_grid_cell_size;
+
+	unsigned int grid_lx = (unsigned int)(1 + imgW * occupied_grid_cell_size_inv);
+	unsigned int grid_ly = (unsigned int)(1 + imgH * occupied_grid_cell_size_inv );
+
+	mrpt::math::CMatrixB occupied_sections(grid_lx,grid_ly);  // See the comments above for an explanation.
+	occupied_sections.fillAll(false);
+
+	size_t k = 0, c_feats = 0;
+	while( c_feats < num_out_points && k < n_feats )
+	{
+		const size_t idx = sorted_indices[k++];
+		const KeyPoint & kp = keypoints[idx];
+
+		// Check the min-distance:
+		const size_t section_idx_x = size_t(kp.pt.x * occupied_grid_cell_size_inv);
+		const size_t section_idx_y = size_t(kp.pt.y * occupied_grid_cell_size_inv);
+
+		if( occupied_sections(section_idx_x,section_idx_y) )
+			continue; // Already occupied! skip.
+
+		// Mark section as occupied
+		occupied_sections.set_unsafe(section_idx_x,section_idx_y, true);
+		if (section_idx_x>0)			occupied_sections.set_unsafe(section_idx_x-1,section_idx_y, true);
+		if (section_idx_y>0)			occupied_sections.set_unsafe(section_idx_x,section_idx_y-1, true);
+		if (section_idx_x<grid_lx-1)	occupied_sections.set_unsafe(section_idx_x+1,section_idx_y, true);
+		if (section_idx_y<grid_ly-1)	occupied_sections.set_unsafe(section_idx_x,section_idx_y+1, true);
+
+		// Mark it as survivor
+		survivors[idx] = true;
+
+		++c_feats;
+	} // end-while
+}
+
 void CStereoOdometryEstimator::m_non_max_sup(
 					const size_t				& num_out_points, 
 					const vector<KeyPoint>		& keypoints, 
@@ -415,7 +478,8 @@ void CStereoOdometryEstimator::m_non_max_sup(
 					vector<KeyPoint>			& out_kp,
 					Mat							& out_kp_desc,
 					const size_t				& imgH, 
-					const size_t				& imgW )
+					const size_t				& imgW,
+					vector<bool>				& survivors )
 {				
 	//  1) Sort the features by "response": It's ~100 times faster to sort a list of
 	//      indices "sorted_indices" than sorting directly the actual list of features "cv_feats"
@@ -423,13 +487,15 @@ void CStereoOdometryEstimator::m_non_max_sup(
 			
 	//prepare output
 	out_kp.clear();
-	out_kp.reserve( n_feats );	const bool use_desc = descriptors.size() != cv::Size(0,0);
+	out_kp.reserve( n_feats );	
+	const bool use_desc = descriptors.size() != cv::Size(0,0);
+	const bool use_surv = survivors.size() > 0;
+	if( use_surv ) survivors.resize(n_feats,false);
 	if( use_desc )
 	{
-		ASSERTDEBMSG_( keypoints.size() == descriptors.rows, format("Keypoints and descriptors do not have the same size: %d vs %d",keypoints.size(),descriptors.rows ); )
+		ASSERTDEBMSG_( keypoints.size() == descriptors.rows, format("Keypoints and descriptors do not have the same size: %d vs %d",keypoints.size(),descriptors.rows ).c_str() )
 		out_kp_desc.reserve( n_feats );
 	}
-
 
 	std::vector<size_t> sorted_indices(n_feats);
 	for( size_t i = 0; i < n_feats; i++ )  sorted_indices[i]=i;
@@ -460,9 +526,9 @@ void CStereoOdometryEstimator::m_non_max_sup(
 		const size_t section_idx_x = size_t(kp.pt.x * occupied_grid_cell_size_inv);
 		const size_t section_idx_y = size_t(kp.pt.y * occupied_grid_cell_size_inv);
 
-		if (occupied_sections(section_idx_x,section_idx_y))
+		if( occupied_sections(section_idx_x,section_idx_y) )
 			continue; // Already occupied! skip.
-
+		
 		// Mark section as occupied
 		occupied_sections.set_unsafe(section_idx_x,section_idx_y, true);
 		if (section_idx_x>0)			occupied_sections.set_unsafe(section_idx_x-1,section_idx_y, true);
@@ -473,6 +539,10 @@ void CStereoOdometryEstimator::m_non_max_sup(
 		// Add it to the output vector
 		out_kp.push_back( kp );
 		if( use_desc ) out_kp_desc.push_back( descriptors.row(idx) ); // only if descriptors are present
+
+		// Mark it as survivor
+		if( use_surv ) survivors[k] = true;
+
 		++c_feats;
 	} // end-while
 }
@@ -481,9 +551,9 @@ void CStereoOdometryEstimator::m_non_max_sup(
   */
 void CStereoOdometryEstimator::m_featlist_to_kpslist( CStereoOdometryEstimator::TImagePairData::img_data_t & img_data )
 {
-	const size_t nPyrs = img_data.pyr.images.size();		
-	img_data.pyr_feats_kps.resize(nPyrs);
-	for( int octave = 0; octave < nPyrs; ++octave )
+	const size_t nOctaves = img_data.pyr.images.size();		
+	img_data.pyr_feats_kps.resize(nOctaves);
+	for( int octave = 0; octave < nOctaves; ++octave )
 		m_convert_featureList_to_keypointList( img_data.pyr_feats[octave], img_data.pyr_feats_kps[octave] );
 } // end--m_featlist_to_kpslist
 
@@ -500,16 +570,23 @@ void CStereoOdometryEstimator::stage2_detect_features(
 	m_profiler.enter("_stg2");
 
 	// :: Resize output containers:
-	const size_t nPyrs = img_data.pyr.images.size();
-	vector<size_t> nFeatsPassingKLTPerOctave(nPyrs);
-    img_data.pyr_feats.resize(nPyrs);
-    img_data.pyr_feats_index.resize(nPyrs);
-    img_data.pyr_feats_kps.resize(nPyrs);
-    img_data.pyr_feats_desc.resize(nPyrs);
+	const size_t nOctaves = img_data.pyr.images.size();
+	ASSERTDEB_(nOctaves>0)
+
+	vector<size_t> nFeatsPassingKLTPerOctave(nOctaves);
+    img_data.pyr_feats.resize(nOctaves);
+    img_data.pyr_feats_index.resize(nOctaves);
+    img_data.pyr_feats_kps.resize(nOctaves);
+    img_data.pyr_feats_desc.resize(nOctaves);
+
+	vector<size_t> kps_to_detect(nOctaves);			// number of kps to detect in each octave
+	kps_to_detect[0] = size_t(params_detect.orb_nfeats*(2*nOctaves)/(std::pow(2,nOctaves)-1));
+	for( size_t octave = 1; octave < nOctaves; ++octave )
+		kps_to_detect[octave] = size_t(round(kps_to_detect[0]/std::pow(2,octave)));
 
 	// :: For the GUI thread
-	m_next_gui_info->stats_feats_per_octave.resize(nPyrs); // Reserve size for stats
-    m_next_gui_info->stats_FAST_thresholds_per_octave.resize(nPyrs);
+	m_next_gui_info->stats_feats_per_octave.resize(nOctaves); // Reserve size for stats
+    m_next_gui_info->stats_FAST_thresholds_per_octave.resize(nOctaves);
 
 	// :: Detection parameters
 	// FASTER METHOD --------------------
@@ -518,8 +595,10 @@ void CStereoOdometryEstimator::stage2_detect_features(
     const double minimum_KLT_response	= params_detect.minimum_KLT_response;
 	// ----------------------------------
 
+	// size_t num_feats_this_octave; 
+
 	// :: Main loop
-	for( size_t octave = 0; octave < nPyrs; ++octave )
+	for( size_t octave = 0; octave < nOctaves; ++octave )
 	{
 		// - Image information
         Mat input_im = img_data.pyr.images[octave].getAs<IplImage>();
@@ -543,19 +622,12 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			goodFeaturesToTrack(
 				input_im,					// image
 				feats_vector,				// output feature vector
-				params_detect.orb_nfeats,	// number of features to detect
+				kps_to_detect[octave],		// params_detect.orb_nfeats,	// number of features to detect
 				0.01,						// quality level
 				20);						// minimum distance
 			
 			desc_aux = Mat();				// no descriptor
 
-			// update row-indexes
-			m_update_indexes( img_data, octave );
-
-            // gui info
-			m_next_gui_info->stats_feats_per_octave[octave] = 
-				nFeatsPassingKLTPerOctave[octave] = feats_vector.size();
-			
 			m_profiler.leave(sProfileName.c_str());
 		}
 		// ***********************************
@@ -563,7 +635,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 		// ***********************************
 		else if( params_detect.detect_method == TDetectParams::dmORB )
 		{
-			// ** NOTE ** in this case, nPyrs should be 1 (set in stage1)
+			// ** NOTE ** in this case, nOctaves should be 1 (set in stage1)
 			const size_t n_feats_to_extract = 
 				params_detect.non_maximal_suppression ? 
 					1.5*params_detect.orb_nfeats : 
@@ -586,13 +658,6 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			// detect keypoints and descriptors
 			orbDetector( input_im, Mat(), feats_vector, desc_aux );  // all the scales in the same call
 
-			// update row-indexes
-			m_update_indexes( img_data, octave );
-			
-			// gui info
-            m_next_gui_info->stats_feats_per_octave[octave] = 
-				nFeatsPassingKLTPerOctave[octave] = feats_vector.size();
-			
 			m_profiler.enter(sProfileName.c_str());
 		}
 #if 0
@@ -638,16 +703,10 @@ void CStereoOdometryEstimator::stage2_detect_features(
 		{
 			m_profiler.enter(sProfileName.c_str());
 			
-			cv::FastFeatureDetector(5).detect( input_im, feats_vector );			// detect keypoints
-			ORB().operator()(input_im, Mat(), feats_vector, desc_aux, true );		// extract descriptors
+			cv::FastFeatureDetector(m_current_fast_th).detect( input_im, feats_vector );	// detect keypoints
+			MRPT_TODO("Perform non-maximal suppression here -- avoids computing ORB descriptors which are going to be rejected")
+			ORB().operator()(input_im, Mat(), feats_vector, desc_aux, true );				// extract descriptors
 
-			// update row-indexes
-			m_update_indexes( img_data, octave );
-
-			// gui info
-            m_next_gui_info->stats_feats_per_octave[octave] = 
-				nFeatsPassingKLTPerOctave[octave] = feats_vector.size();
-			
 			m_profiler.leave(sProfileName.c_str());
 		}
 		// ***********************************
@@ -656,8 +715,8 @@ void CStereoOdometryEstimator::stage2_detect_features(
 		else if( params_detect.detect_method == TDetectParams::dmFASTER )
 		{
 			// Use a dynamic threshold to maintain a target number of features per square pixel.
-			if( m_threshold.size() != nPyrs ) 
-				m_threshold.assign(nPyrs, params_detect.initial_FAST_threshold);
+			if( m_threshold.size() != nOctaves ) 
+				m_threshold.assign(nOctaves, params_detect.initial_FAST_threshold);
 
 			m_profiler.enter(sProfileName.c_str());
 
@@ -671,12 +730,6 @@ void CStereoOdometryEstimator::stage2_detect_features(
 
             const size_t nFeats = img_data.pyr_feats[octave].size();
 
-			// *****************************************************
-			// fill in the identifiers of the features
-            for( size_t id = 0; id < nFeats; ++id )
-                img_data.pyr_feats[octave][id].ID = this->m_lastID++;
-			// *****************************************************
-			
 			if( update_dyn_thresholds )
             {
                 // Compute feature density & adjust dynamic threshold:
@@ -712,9 +765,6 @@ void CStereoOdometryEstimator::stage2_detect_features(
                 else f.response = 0;
             } // end-for
 
-            nFeatsPassingKLTPerOctave[octave] = nPassed;
-            m_profiler.leave(subSectionName.c_str());
-
 			/** /
             // perform non-maximal suppression [5x5] window (if enabled)
             if( params_detect.non_maximal_suppression )
@@ -730,8 +780,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			// convert to TKeyPointList (opencv compatible)
 			m_convert_featureList_to_keypointList( img_data.pyr_feats[octave], feats_vector );
 
-            m_profiler.leave(sProfileName.c_str()); // end detect
-
+			m_profiler.leave(sProfileName.c_str()); // end detect
 		}
 		else
 			THROW_EXCEPTION("	[sVO -- Stg2: Detect] ERROR: Unknown detection method")
@@ -745,10 +794,10 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			{
 				const size_t imgH = input_im.rows;
 				const size_t imgW = input_im.cols;
-				this->m_non_max_sup( params_detect.orb_nfeats, feats_vector, desc_aux, img_data.pyr_feats_kps[octave], img_data.pyr_feats_desc[octave], imgH, imgW );
+				this->m_non_max_sup( kps_to_detect[octave]/*params_detect.orb_nfeats*/, feats_vector, desc_aux, img_data.pyr_feats_kps[octave], img_data.pyr_feats_desc[octave], imgH, imgW );
 			}
 			else if( params_detect.nmsMethod == TDetectParams::nmsmAdaptive )
-				this->m_adaptive_non_max_sup( params_detect.orb_nfeats, feats_vector, desc_aux, img_data.pyr_feats_kps[octave], img_data.pyr_feats_desc[octave] );
+				this->m_adaptive_non_max_sup( kps_to_detect[octave]/*params_detect.orb_nfeats*/, feats_vector, desc_aux, img_data.pyr_feats_kps[octave], img_data.pyr_feats_desc[octave] );
 			else
 				THROW_EXCEPTION("	[sVO -- Stg2: Detect] Invalid non-maximal-suppression method." );
 		} // end-if-non-max-sup
@@ -757,9 +806,23 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			feats_vector.swap(img_data.pyr_feats_kps[octave]);
 			img_data.pyr_feats_desc[octave] = desc_aux;					// this should be fast (just copy the header)
 		}
-	} // end-for
 
-	VERBOSE_LEVEL(2) << "	[sVO -- Stg2: Detect] Detected: " << img_data.orb_feats.size() << " feats" << endl;
+		// update indexes here
+		m_update_indexes( img_data, octave );
+
+        // gui info
+		m_next_gui_info->stats_feats_per_octave[octave] = 
+			nFeatsPassingKLTPerOctave[octave] = img_data.pyr_feats_kps[octave].size();
+
+		// TO DO: DELETE THIS, POSSIBLY UNNECESSARY
+		// ***********************************
+		// Fill keypoints ids
+		// ***********************************
+		//for( size_t idx = 0; idx < num_feats_this_octave; ++idx )
+		//	img_data.pyr_feats_kps[octave][idx].class_id = m_lastID++;
+
+	 } // end-for-octaves
+
 #if 0
 	// ***********************************
 	// FASTER method (no descriptor)
@@ -767,16 +830,16 @@ void CStereoOdometryEstimator::stage2_detect_features(
 	else if( params_detect.detect_method == TDetectParams::dmFASTER )
 	{
         // Use a dynamic threshold to maintain a target number of features per square pixel.
-        if (m_threshold.size()!=nPyrs) m_threshold.assign(nPyrs, params_detect.initial_FAST_threshold);
+        if (m_threshold.size()!=nOctaves) m_threshold.assign(nOctaves, params_detect.initial_FAST_threshold);
 
-        m_next_gui_info->stats_feats_per_octave.resize(nPyrs); // Reserve size for stats
-        m_next_gui_info->stats_FAST_thresholds_per_octave.resize(nPyrs);
+        m_next_gui_info->stats_feats_per_octave.resize(nOctaves); // Reserve size for stats
+        m_next_gui_info->stats_FAST_thresholds_per_octave.resize(nOctaves);
 
         // Evaluate the KLT response of all features to discard those in texture-less zones:
         const unsigned int KLT_win	= params_detect.KLT_win;
         const double minimum_KLT_response	= params_detect.minimum_KLT_response;
 
-        for (size_t octave=0;octave<nPyrs;octave++)
+        for (size_t octave=0;octave<nOctaves;octave++)
         {
             const std::string sProfileName = mrpt::format("stg2.detect.oct=%u",static_cast<unsigned int>(octave));
             m_profiler.enter(sProfileName.c_str());
@@ -862,7 +925,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 		// a gain of 75us -> 50us only, so don't optimize unless efficiency pushes really hard).
 		m_profiler.enter("stg2.draw_feats");
 
-        for (size_t octave=0;octave<nPyrs;octave++)
+        for (size_t octave=0;octave<nOctaves;octave++)
         {
 			const TKeyPointList & f1 = img_data.pyr_feats_kps[octave];
             const size_t n1 = f1.size();
@@ -890,7 +953,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 
     // for the GUI thread
     string sPassKLT = "", sDetect = "";
-    for( size_t i=0;i<nPyrs;i++ )
+    for( size_t i=0;i<nOctaves;i++ )
 	{
         sPassKLT += mrpt::format( "%u/",static_cast<unsigned int>(nFeatsPassingKLTPerOctave[i]) );
         sDetect  += mrpt::format( "%u/",static_cast<unsigned int>(img_data.pyr_feats_kps[i].size()) );

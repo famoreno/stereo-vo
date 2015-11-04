@@ -84,6 +84,8 @@ CStereoOdometryEstimator::TLeastSquaresParams::TLeastSquaresParams() :
 {
 }
 
+CStereoOdometryEstimator::TInterFrameMatchingParams::TInterFrameMatchingParams() {}
+
 /*--------------------------------------------------------------------
 						m_dump_keypoints_to_stream
 ----------------------------------------------------------------------*/
@@ -342,9 +344,9 @@ bool CStereoOdometryEstimator::loadStateFromFile( const string & filename )
 
 	size_t v_s;
 	vo_state_file_stream.read( (char*)&v_s, sizeof(size_t) );
-	this->m_kf_ids.resize(v_s);
-	for( size_t k = 0; k < v_s; ++k )
-		vo_state_file_stream.read( (char*)&(this->m_kf_ids[k]), sizeof(size_t) );
+	//this->m_kf_ids.resize(v_s);
+	//for( size_t k = 0; k < v_s; ++k )
+	//	vo_state_file_stream.read( (char*)&(this->m_kf_ids[k]), sizeof(size_t) );
 
 	vo_state_file_stream.read( (char*)&this->m_last_match_ID, sizeof(size_t) );
 	vo_state_file_stream.read( (char*)&this->m_kf_max_match_ID, sizeof(size_t) );
@@ -601,10 +603,10 @@ bool CStereoOdometryEstimator::saveStateToFile( const string & filename )
 	vo_state_file_stream.write( (char*)&this->m_num_tracked_pairs_from_last_kf, sizeof(size_t) );
 	vo_state_file_stream.write( (char*)&this->m_num_tracked_pairs_from_last_frame, sizeof(size_t) );
 
-	const size_t v_s = this->m_kf_ids.size();
-	vo_state_file_stream.write( (char*)&v_s, sizeof(size_t) );
-	for(size_t k = 0; k < v_s; ++k)
-		vo_state_file_stream.write( (char*)&(this->m_kf_ids[k]), sizeof(size_t) );
+	//const size_t v_s = this->m_kf_ids.size();
+	//vo_state_file_stream.write( (char*)&v_s, sizeof(size_t) );
+	//for(size_t k = 0; k < v_s; ++k)
+	//	vo_state_file_stream.write( (char*)&(this->m_kf_ids[k]), sizeof(size_t) );
 
 	vo_state_file_stream.write( (char*)&this->m_last_match_ID, sizeof(size_t) );
 	vo_state_file_stream.write( (char*)&this->m_kf_max_match_ID, sizeof(size_t) );
