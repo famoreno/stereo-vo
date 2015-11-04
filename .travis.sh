@@ -36,6 +36,10 @@ mkdir -p $OUT_DIR;
 
 cd $SRC_DIR/libstereo-odometry/
 
+# Get MRPT doxygen tags, so MRPT classes link to their docs:
+wget -q -O dox_mrpt.tag http://reference.mrpt.org/devel/dox_mrpt.tag
+
+# Run doxygen
 doxygen
 
 cd $OUT_DIR
