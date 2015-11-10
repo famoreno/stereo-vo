@@ -36,7 +36,6 @@ void CStereoOdometryEstimator::m_filter_by_fundmatrix(
 	const size_t num_matches = prevPts.size();
 	vector<cv::Point2f> aux_prevpts,aux_nextpts;
 
-	// -- left
 	aux_prevpts.reserve(num_matches);
 	aux_nextpts.reserve(num_matches);
 	for( int p = 0; p < num_matches; ++p )
@@ -71,13 +70,13 @@ void CStereoOdometryEstimator::stage4_track(
 	if( params_general.vo_save_files )
 		f = os::fopen( mrpt::format("%s/inter_frame_matching_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(),"wt");
 
-	// Descriptor based -> only 1 octave
+	// Descriptor based
 	// --------------------------------------------------------
 	// ORB descriptor brute force matching with the entire image
 	// --------------------------------------------------------
 	if( params_if_match.ifm_method == TInterFrameMatchingParams::ifmDescBF )
 	{
-		// only one octave for ORB
+		// NOTE: it should be only one octave for ORB
 		for( size_t octave = 0; octave < nOctaves; ++octave )
 		{
 			// ******************************************
@@ -128,8 +127,8 @@ void CStereoOdometryEstimator::stage4_track(
 
 			// -- match the left-left features and the right-right features (matL.size() == matR.size())
 			TDMatchList matL, matR;
-			matcher.match( preLDesc /*query*/, curLDesc /*train*/, matL /* size of query */);
-			matcher.match( preRDesc /*query*/, curRDesc /*train*/, matR /* size of query */);
+			matcher.match( preLDesc /*query*/, curLDesc /*train*/, matL /* size of query */ );
+			matcher.match( preRDesc /*query*/, curRDesc /*train*/, matR /* size of query */ );
 
 			// -- filter out by distance and avoid collisions for both 'Mats' at the same time
 			vector<bool> left_train_matched( curNMatches, false ), right_train_matched( curNMatches, false );
@@ -161,14 +160,14 @@ void CStereoOdometryEstimator::stage4_track(
 			cv::Mat p1(matL.size(),2,cv::DataType<float>::type),p2(matL.size(),2,cv::DataType<float>::type);
         
 			FILE *fprev = NULL;
-			if( this->params_general.vo_save_files )
+			if( params_general.vo_save_files )
 			{
 				fprev = os::fopen( mrpt::format("%s/l-l_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(), "wt");
 				ASSERTDEB_( fprev!=NULL )
 			}
 
 			unsigned int k;
-			for(k = 0, itM = matL.begin(); itM != matL.end(); ++itM, ++k)
+			for( k = 0, itM = matL.begin(); itM != matL.end(); ++itM, ++k )
 			{
 				const size_t preIdx = prev_imgpair.lr_pairing_data[octave].matches_lr_dm[itM->queryIdx].queryIdx;
 				const size_t curIdx = cur_imgpair.lr_pairing_data[octave].matches_lr_dm[itM->trainIdx].queryIdx;
@@ -178,7 +177,7 @@ void CStereoOdometryEstimator::stage4_track(
 				p2.at<float>(k,0) = static_cast<float>( cur_imgpair.left.pyr_feats_kps[octave][curIdx].pt.x );
 				p2.at<float>(k,1) = static_cast<float>( cur_imgpair.left.pyr_feats_kps[octave][curIdx].pt.y );
 
-				if( this->params_general.vo_save_files )
+				if( params_general.vo_save_files )
 				{
 					os::fprintf(fprev, "%.2f %.2f %.2f %.2f %.2f\n",
 						prev_imgpair.left.pyr_feats_kps[octave][preIdx].pt.x, prev_imgpair.left.pyr_feats_kps[octave][preIdx].pt.y,
@@ -275,7 +274,7 @@ void CStereoOdometryEstimator::stage4_track(
 					out_tracked_feats.tracked_pairs[octave].push_back( make_pair( pre_match_idx, cur_match_idx ) );	// store the match indexes
 
 					// manage idsn
-					if( this->params_general.vo_use_matches_ids )
+					if( params_general.vo_use_matches_ids )
 					{
 						cur_imgpair.lr_pairing_data[octave].matches_IDs[cur_match_idx] = prev_imgpair.lr_pairing_data[octave].matches_IDs[ pre_match_idx ];
 						c_tracked[cur_match_idx] = true;
@@ -304,10 +303,15 @@ void CStereoOdometryEstimator::stage4_track(
 					const size_t & curLIdx = cur_imgpair.lr_pairing_data[octave].matches_lr_dm[out_tracked_feats.tracked_pairs[octave][k].second].queryIdx;
 					const size_t & curRIdx = cur_imgpair.lr_pairing_data[octave].matches_lr_dm[out_tracked_feats.tracked_pairs[octave][k].second].trainIdx;
 
-					os::fprintf( f, "%d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f\n",
-						octave,
-						prev_imgpair.left.pyr_feats_kps[octave][preLIdx].pt.x, prev_imgpair.left.pyr_feats_kps[octave][preLIdx].pt.y, prev_imgpair.right.pyr_feats_kps[octave][preRIdx].pt.x, prev_imgpair.right.pyr_feats_kps[octave][preRIdx].pt.y,
-						cur_imgpair.left.pyr_feats_kps[octave][curLIdx].pt.x,  cur_imgpair.left.pyr_feats_kps[octave][curLIdx].pt.y,  cur_imgpair.right.pyr_feats_kps[octave][curRIdx].pt.x,  cur_imgpair.right.pyr_feats_kps[octave][curRIdx].pt.y );
+					os::fprintf( f, "%d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %d %d\n",
+						octave, 
+						prev_imgpair.left.pyr_feats_kps[octave][preLIdx].pt.x, prev_imgpair.left.pyr_feats_kps[octave][preLIdx].pt.y, 
+						prev_imgpair.right.pyr_feats_kps[octave][preRIdx].pt.x, prev_imgpair.right.pyr_feats_kps[octave][preRIdx].pt.y,
+						cur_imgpair.left.pyr_feats_kps[octave][curLIdx].pt.x,  cur_imgpair.left.pyr_feats_kps[octave][curLIdx].pt.y,  
+						cur_imgpair.right.pyr_feats_kps[octave][curRIdx].pt.x,  cur_imgpair.right.pyr_feats_kps[octave][curRIdx].pt.y,
+						out_tracked_feats.tracked_pairs[octave][k].first, 
+						out_tracked_feats.tracked_pairs[octave][k].second
+						);
 				}
 			} // end-if
 		} // end-for-octaves
@@ -366,8 +370,8 @@ void CStereoOdometryEstimator::stage4_track(
 
 			// with only those with status == 1
 			vector<uchar> inliers_left, inliers_right;
-			m_filter_by_fundmatrix( prevPts_left, nextPts_left, status_left /*will be updated*/);
-			m_filter_by_fundmatrix( prevPts_right, nextPts_right, status_right /*will be updated*/);
+			m_filter_by_fundmatrix( prevPts_left, nextPts_left, status_left /*will be updated*/ );
+			m_filter_by_fundmatrix( prevPts_right, nextPts_right, status_right /*will be updated*/ );
 
 			// updated tracking information
 			for( int i = 0; i < num_pre_matches; ++i )
@@ -399,17 +403,17 @@ void CStereoOdometryEstimator::stage4_track(
 					// create output
 					out_tracked_feats.tracked_pairs[octave].push_back( make_pair(i,j) );	// store the match indexes
 
-					if(this->params_general.vo_use_matches_ids)
+					if( params_general.vo_use_matches_ids )
 					{
 						// keep the previous match ID
 						cur_imgpair.lr_pairing_data[octave].matches_IDs[j] = 
 							prev_imgpair.lr_pairing_data[octave].matches_IDs[i];
 					}
 				} // end-if
-				else if(this->params_general.vo_use_matches_ids)
+				else if( params_general.vo_use_matches_ids )
 				{
 					// assign a new match ID
-					cur_imgpair.lr_pairing_data[octave].matches_IDs[j] = ++this->m_last_match_ID;
+					cur_imgpair.lr_pairing_data[octave].matches_IDs[j] = ++m_last_match_ID;
 				}
 			} // end-for
 		} // end--for
@@ -450,7 +454,23 @@ void CStereoOdometryEstimator::stage4_track(
 
 			// For each octave:
 			const TImagePairData::img_pairing_data_t & prev_pairs = prev_imgpair.lr_pairing_data[octave];
-			const TImagePairData::img_pairing_data_t & cur_pairs  = cur_imgpair.lr_pairing_data[octave];
+			TImagePairData::img_pairing_data_t		 & cur_pairs  = cur_imgpair.lr_pairing_data[octave];
+			const size_t preNMatches = prev_pairs.matches_lr_dm.size();
+			const size_t curNMatches = cur_pairs.matches_lr_dm.size();
+			
+			// -- prepare id vector
+			if( params_general.vo_use_matches_ids )
+				cur_pairs.matches_IDs.resize( curNMatches );
+
+			// -- prepare auxiliar input points vector
+			vector<cv::Point2f> pre_pts_left, pre_pts_right, cur_pts_left, cur_pts_right;
+			pre_pts_left.reserve( preNMatches ); 
+			pre_pts_right.reserve( preNMatches );	// maximum size: number of matches in PREVIOUS pair of images
+			cur_pts_left.reserve( preNMatches ); 
+			cur_pts_right.reserve( preNMatches );	// maximum size: number of matches in PREVIOUS pair of images
+			
+			vector< pair<size_t,size_t> >potential_match_idxs;
+			potential_match_idxs.reserve( preNMatches );
 
 			// Get the maximum (x,y) for window searching:
 			const mrpt::utils::TImageSize img_size = prev_imgpair.left.pyr.images[octave].getSize();
@@ -473,6 +493,10 @@ void CStereoOdometryEstimator::stage4_track(
 
 			const size_t img_stride = pImgL.getRowStride();
 			ASSERTDEB_(img_stride == pImgR.getRowStride() && img_stride==cImgL.getRowStride() && img_stride==cImgR.getRowStride())
+
+			// for keepint robust 121 pre-cur matches
+			vector< pair<int, uint32_t> > current_matches(curNMatches,make_pair(INVALID_IDX,std::numeric_limits<uint32_t>::max()));
+			size_t potential_matches = 0;
 
 			// Go thru all the paired features in the y'th row of the previous image,
 			//  and compare them with all the paired features in a window on the current image.
@@ -505,9 +529,9 @@ void CStereoOdometryEstimator::stage4_track(
 					const size_t pidx_l = prev_pairs.matches_lr_dm[pi].queryIdx;
 					const size_t pidx_r = prev_pairs.matches_lr_dm[pi].trainIdx;
 
-					size_t   best_pairing_in_curimg = invalid_pairing_id;				// Index of paired feature ( as in cur_pairs.matches_lr )
+					size_t	 best_pairing_in_curimg = invalid_pairing_id;				// Index of paired feature ( as in cur_pairs.matches_lr )
 					uint32_t best_pairing_SAD = std::numeric_limits<uint32_t>::max();	// Sum of the SAD of both L&R tracked feats
-					uint8_t best_pairing_ORB  = std::numeric_limits<uint8_t>::max();	// Sum of the ORB of both L&R tracked feats
+					uint8_t  best_pairing_ORB = std::numeric_limits<uint8_t>::max();	// Sum of the ORB of both L&R tracked feats
 
 					// Set the horz limits of the search window for these feats:
 					const cv::KeyPoint & p_ft_l = prev_imgpair.left.pyr_feats_kps[octave][pidx_l];
@@ -522,8 +546,8 @@ void CStereoOdometryEstimator::stage4_track(
 					for( size_t ci = cur_idx0; ci < cur_idx1; ci++ )
 					{
 						// The two indices of the left & right features in the current stereo img:
-						const size_t cidx_l = cur_pairs.matches_lr[ci].first;
-						const size_t cidx_r = cur_pairs.matches_lr[ci].second;
+						const size_t cidx_l = cur_pairs.matches_lr_dm[ci].queryIdx;
+						const size_t cidx_r = cur_pairs.matches_lr_dm[ci].trainIdx;
 
 						const cv::KeyPoint & ft_l = cur_imgpair.left.pyr_feats_kps[octave][cidx_l];
 						const cv::KeyPoint & ft_r = cur_imgpair.right.pyr_feats_kps[octave][cidx_r];
@@ -553,24 +577,27 @@ void CStereoOdometryEstimator::stage4_track(
 						}
 						else // ORB
 						{
+							const size_t p_idx = prev_imgpair.lr_pairing_data[octave].matches_lr_dm[pi].queryIdx;
+							const size_t c_idx = cur_imgpair.lr_pairing_data[octave].matches_lr_dm[ci].queryIdx;
+
 							// compute ORB distance
 							// ORB descriptor Hamming distance (left-left and right-right)
 							uint8_t orb_l = 0, orb_r = 0;
 							for( uint8_t k = 0; k < desc_pre_left.cols; ++k )
 							{
-								uint8_t x_or = desc_pre_left.at<uint8_t>(pi,k) ^ desc_cur_left.at<uint8_t>(ci,k);
+								uint8_t x_or = desc_pre_left.at<uint8_t>(p_idx,k) ^ desc_cur_left.at<uint8_t>(c_idx,k);
 								uint8_t count;								// from : Wegner, Peter (1960), "A technique for counting ones in a binary computer", Communications of the ACM 3 (5): 322, doi:10.1145/367236.367286
 								for( count = 0; x_or; count++ )				// ...
 									x_or &= x_or-1;							// ...
 								orb_l += count;
 
-								x_or = desc_pre_right.at<uint8_t>(pi,k) ^ desc_cur_right.at<uint8_t>(ci,k);
-								for( count = 0; x_or; count++ )				// ...
-									x_or &= x_or-1;							// ...
-								orb_r += count;
+								//x_or = desc_pre_right.at<uint8_t>(pi,k) ^ desc_cur_right.at<uint8_t>(ci,k);
+								//for( count = 0; x_or; count++ )				// ...
+								//	x_or &= x_or-1;							// ...
+								//orb_r += count;
 							}
 
-							const uint32_t orb = orb_l+orb_r;
+							const uint32_t orb = orb_l; //+orb_r;
 
 							// OK, match below the threshold: keep the best of all of them:
 							if( orb < best_pairing_ORB )
@@ -583,46 +610,118 @@ void CStereoOdometryEstimator::stage4_track(
 
 					if( best_pairing_in_curimg != invalid_pairing_id )
 					{
-						// we've got a match!
-						out_tracked_feats.tracked_pairs[octave].push_back( std::make_pair(pi,best_pairing_in_curimg) );
-
-						if( params_general.vo_use_matches_ids )
+						const uint32_t best_pairing = use_SAD ? best_pairing_SAD : uint32_t(best_pairing_ORB);
+						if( current_matches[best_pairing_in_curimg].first == INVALID_IDX )
 						{
-							cur_imgpair.lr_pairing_data[octave].matches_IDs[best_pairing_in_curimg] = 
-								prev_imgpair.lr_pairing_data[octave].matches_IDs[pi];
-						}
-
-						const size_t idL1 = prev_pairs.matches_lr_dm[pi].queryIdx;
-						const size_t idR1 = prev_pairs.matches_lr_dm[pi].trainIdx;
-						const size_t idL2 = cur_pairs.matches_lr_dm[best_pairing_in_curimg].queryIdx;
-						const size_t idR2 = cur_pairs.matches_lr_dm[best_pairing_in_curimg].trainIdx;
-						//os::fprintf(ftrack,"%d %d %d %d %d %d %d %d\n",
-						//	prev_imgpair.left.pyr_feats[octave][idL1].pt.x,  prev_imgpair.left.pyr_feats[octave][idL1].pt.y,
-						//	prev_imgpair.right.pyr_feats[octave][idR1].pt.x, prev_imgpair.right.pyr_feats[octave][idR1].pt.y,
-						//	cur_imgpair.left.pyr_feats[octave][idL2].pt.x,   cur_imgpair.left.pyr_feats[octave][idL2].pt.y,
-						//	cur_imgpair.right.pyr_feats[octave][idR2].pt.x,  cur_imgpair.right.pyr_feats[octave][idR2].pt.y);
-						//pause();
-
-						// update the identificator (keep the previous one)
-						cur_imgpair.left.pyr_feats_kps[octave][idL2].class_id =
-							prev_imgpair.left.pyr_feats_kps[octave][idL1].class_id;
-
-						cur_imgpair.right.pyr_feats_kps[octave][idR2].class_id =
-							prev_imgpair.right.pyr_feats_kps[octave][idR1].class_id;
+							current_matches[best_pairing_in_curimg].first = int(pi);
+							current_matches[best_pairing_in_curimg].second = best_pairing;
+							potential_matches++;
+						} // end-if
+						if( current_matches[best_pairing_in_curimg].first != INVALID_IDX && best_pairing < current_matches[best_pairing_in_curimg].second)// already matched, skip
+						{
+							current_matches[best_pairing_in_curimg].first = int(pi);
+							current_matches[best_pairing_in_curimg].second = best_pairing;
+						} // end-if
 					} // end--if
-					else if( params_general.vo_use_matches_ids )
-					{
-						cur_imgpair.lr_pairing_data[octave].matches_IDs[best_pairing_in_curimg] = ++this->m_last_match_ID;
-					}
-
 				} // end for each feature in previous imgpair at row "y"
-
 			} // end for each row "y"
 
-		} // end for each octave
+			for( size_t best_pairing_in_curimg = 0; best_pairing_in_curimg < current_matches.size(); ++best_pairing_in_curimg )
+			{
+				if( current_matches[best_pairing_in_curimg].first != INVALID_IDX )
+				{
+					const size_t pi = size_t(current_matches[best_pairing_in_curimg].first);
 
-        cout << "Tracked features: " << m_num_tracked_pairs_from_last_frame << endl;
-        //os::fclose(ftrack);
+					// we've got a potential match!
+					// prepare it for filtering through fundamental matrix:
+					size_t idxL = prev_imgpair.lr_pairing_data[octave].matches_lr_dm[pi].queryIdx;
+					size_t idxR = prev_imgpair.lr_pairing_data[octave].matches_lr_dm[pi].trainIdx;
+						
+					pre_pts_left.push_back( cv::Point2f(
+						prev_imgpair.left.pyr_feats_kps[octave][idxL].pt.x,
+						prev_imgpair.left.pyr_feats_kps[octave][idxL].pt.y) );
+					pre_pts_right.push_back( cv::Point2f(							
+						prev_imgpair.right.pyr_feats_kps[octave][idxR].pt.x,
+						prev_imgpair.right.pyr_feats_kps[octave][idxR].pt.y) );
+
+					idxL = cur_imgpair.lr_pairing_data[octave].matches_lr_dm[best_pairing_in_curimg].queryIdx;
+					idxR = cur_imgpair.lr_pairing_data[octave].matches_lr_dm[best_pairing_in_curimg].trainIdx;
+
+					cur_pts_left.push_back( cv::Point2f(
+						cur_imgpair.left.pyr_feats_kps[octave][idxL].pt.x,
+						cur_imgpair.left.pyr_feats_kps[octave][idxL].pt.y) );
+					cur_pts_right.push_back( cv::Point2f(							
+						cur_imgpair.right.pyr_feats_kps[octave][idxR].pt.x,
+						cur_imgpair.right.pyr_feats_kps[octave][idxR].pt.y) );
+
+					potential_match_idxs.push_back( std::make_pair(pi,best_pairing_in_curimg) );
+
+					if( params_general.vo_save_files )
+					{
+						os::fprintf( f, "%d %.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f %d %d\n",
+							octave,
+							pre_pts_left.back().x, pre_pts_left.back().y, pre_pts_right.back().x, pre_pts_right.back().y,
+							cur_pts_left.back().x, cur_pts_left.back().y, cur_pts_right.back().x, cur_pts_right.back().y,
+							pi, best_pairing_in_curimg );
+					}
+				} // end-if
+			} // end-for
+
+			// -- filter by fundamental matrix
+			vector<uchar> inliers_left, inliers_right;
+			cv::Mat p1_left(pre_pts_left), p2_left(cur_pts_left);
+			cv::findFundamentalMat( p1_left, p2_left, cv::FM_RANSAC, 1.0, 0.99, inliers_left );
+
+			const int numInliersLeft = cv::countNonZero(inliers_left);
+			bool use_fund_mat_filter = numInliersLeft >= 8;
+			VERBOSE_LEVEL(2) << endl << "	Number of inliers left-left: " << numInliersLeft << endl;
+			if( !use_fund_mat_filter )
+			{
+				VERBOSE_LEVEL(1) << " Left fundamental matrix not found!" << endl;
+			}
+			else
+			{
+				cv::Mat p1_right(pre_pts_right), p2_right(cur_pts_right);
+				cv::findFundamentalMat( p1_right, p2_right, cv::FM_RANSAC, 1.0, 0.99, inliers_right );
+
+				const int numInliersRight = cv::countNonZero(inliers_right);
+				use_fund_mat_filter = numInliersRight >= 8;
+				VERBOSE_LEVEL(2) << "	Number of inliers right-right: " << numInliersRight << endl;
+				if( !use_fund_mat_filter )
+				{
+					VERBOSE_LEVEL(1) << " Right fundamental matrix not found!" << endl;
+				}
+			}
+
+			vector<bool> c_tracked(curNMatches,false);
+			for( size_t i = 0; i < potential_match_idxs.size(); ++i )
+			{
+				if( use_fund_mat_filter && (!inliers_left[i] || !inliers_right[i]) )
+					continue;
+
+				// -- insert all potential matches in output vector
+				out_tracked_feats.tracked_pairs[octave].push_back( potential_match_idxs[i] );
+				
+				if( params_general.vo_use_matches_ids )
+				{
+					cur_imgpair.lr_pairing_data[octave].matches_IDs[potential_match_idxs[i].second] = 
+						prev_imgpair.lr_pairing_data[octave].matches_IDs[potential_match_idxs[i].first];
+					c_tracked[potential_match_idxs[i].second] = true;
+				}
+			}
+			
+			// ******************************************
+			// 5. ID MANAGEMENT
+			// ******************************************
+			// add new ids to those current matches with no tracking info:
+			if( params_general.vo_use_matches_ids )
+			{
+				for( size_t k = 0; k < c_tracked.size(); ++k )
+					if( !c_tracked[k] )
+						cur_imgpair.lr_pairing_data[octave].matches_IDs[k] = ++m_last_match_ID;
+			} // end-if
+
+		} // end for each octave
 
         m_profiler.leave("stg4.track");
 	} // end -- ifmSAD
@@ -1233,11 +1332,10 @@ void CStereoOdometryEstimator::stage4_track(
 		// infor for the GUI
 		m_next_gui_info->text_msg_from_conseq_match = mrpt::format(
 			"Tracked: %u features",
-			static_cast<unsigned int>(this->m_num_tracked_pairs_from_last_frame)
+			static_cast<unsigned int>(m_num_tracked_pairs_from_last_frame)
 		);
-		m_profiler.leave("_stg4");
-
 	} // end-params_gui.draw_tracking
+	m_profiler.leave("_stg4");
 } // end-stage4_track
 
 

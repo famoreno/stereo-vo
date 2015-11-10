@@ -869,7 +869,8 @@ namespace rso
 				const TKeyPointList					& list1_r,			// input -- right image coords at time 't'
 				const TKeyPointList					& list2_l,			// input -- left image coords at time 't+1'
 				const TKeyPointList					& list2_r,			// input -- right image coords at time 't+1'
-				const vector<bool>					& mask,
+				const vector<bool>					& mask,				// input -- true/false: use/do not use corresponding keypoint
+				const vector<TPoint3D>				& lmks,				// input -- projected 'list1_x' points in 3D (computed outside just once)
 				const vector<double>				& deltaPose,        // input -- (w1,w2,w3,t1,t2,t3)
 				const mrpt::utils::TStereoCamera	& stereoCam,		// input -- stereo camera parameters
 				Eigen::MatrixXd						& out_newPose,		// output

@@ -168,7 +168,7 @@ int main(int argc, char**argv)
 
 		CPose3D pose;
 		// CPose3D poseOnRobot(0,0,0,DEG2RAD(-90),DEG2RAD(0),DEG2RAD(-100) );	// read this from app config file
-		CPose3D poseOnRobot(v_pose[0],v_pose[1],v_pose[2],v_pose[3],v_pose[4],v_pose[5]);
+		CPose3D poseOnRobot(v_pose[0],v_pose[1],v_pose[2],DEG2RAD(v_pose[3]),DEG2RAD(v_pose[4]),DEG2RAD(v_pose[5]));
 
 		FILE *f = mrpt::system::os::fopen( mrpt::format("%s/camera_pose.txt", stereo_odom_engine.params_general.vo_out_dir.c_str()).c_str(),"wt");
 
@@ -203,9 +203,6 @@ int main(int argc, char**argv)
 		{
 			cout << "Frame: " << ++count << endl;
 
-			if( count == 3 )
-				return 0;
-
 			CStereoOdometryEstimator::TStereoOdometryResult  odom_result;
 
 			// We need the observation type to be stereo images: (if it's the wrong type, an exception will be raised)
@@ -216,7 +213,27 @@ int main(int argc, char**argv)
 
 			// Compute the current position
             if( odom_result.valid )
-                pose += (poseOnRobot+odom_result.outPose);
+			{
+				//CPose3D pri_pose(pose);
+
+				//// composition
+				//CPose3D aux;
+				//aux.composeFrom(poseOnRobot,odom_result.outPose);
+				//aux.inverseComposeFrom(aux,poseOnRobot);
+				//pose.composeFrom(pose,aux);
+				//cout << "CPose3D: " << pose << endl;
+
+				// matrix version
+				CMatrixDouble44 mat01,mat02,mat03,mat04,mat05;
+				pose.getHomogeneousMatrix(mat01);					// pose
+				poseOnRobot.getHomogeneousMatrix(mat02);			// k
+				odom_result.outPose.getHomogeneousMatrix(mat03);	// deltaPose
+
+				mat04 = mat02*mat03*mat02.inverse();
+				mat05.multiply(mat01,mat04);
+				pose = CPose3D(mat05);
+				// cout << "Matrix: " << pose << endl;
+			}
 			else
 			{
 			    DUMP_VO_ERROR_CODE( odom_result.error_code )

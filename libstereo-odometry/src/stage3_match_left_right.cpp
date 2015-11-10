@@ -226,7 +226,7 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 		for( size_t octave = 0; octave < nOctaves; ++octave)
 		{
 			// The list of keypoints
-			const TKeyPointList & feats_left		= imgpair.left.pyr_feats_kps[octave];
+			const TKeyPointList & feats_left	= imgpair.left.pyr_feats_kps[octave];
 			const TKeyPointList & feats_right	= imgpair.right.pyr_feats_kps[octave];
 
             // References to the feature indices by row:
@@ -286,7 +286,7 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
                     // two lowest distances and lowest distance index
 					uint32_t min_1, min_2;
                     min_1 = min_2 = std::numeric_limits<uint32_t>::max();
-                    size_t min_idx = 0;
+                    int min_idx = INVALID_IDX;
 
 					for( size_t idx_feats_R = idx_feats_R0; idx_feats_R < idx_feats_R1; idx_feats_R++ )
                     {
@@ -371,35 +371,38 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
                     } // end for feats_R
 
 					// We've got a potential match
-					if( params_lr_match.enable_robust_1to1_match )
+					if( min_idx != INVALID_IDX )
 					{
-						// check if the right feature has been already assigned
-						if( right_feat_assign[min_idx].first == INVALID_IDX )
+						if( params_lr_match.enable_robust_1to1_match )
 						{
-							// set the new match
-							left_matches_idxs[idx_feats_L]		= min_idx;
-							right_feat_assign[min_idx].first	= idx_feats_L;		// will keep the **BEST** match
-							right_feat_assign[min_idx].second	= min_1;
-						}
-						else if( min_1 < right_feat_assign[min_idx].second )
+							// check if the right feature has been already assigned
+							if( right_feat_assign[min_idx].first == INVALID_IDX )
+							{
+								// set the new match
+								left_matches_idxs[idx_feats_L]		= min_idx;
+								right_feat_assign[min_idx].first	= idx_feats_L;		// will keep the **BEST** match
+								right_feat_assign[min_idx].second	= min_1;
+							}
+							else if( min_1 < right_feat_assign[min_idx].second )
+							{
+								// undo the previous one and set the new one
+								left_matches_idxs[right_feat_assign[min_idx].first] = INVALID_IDX;
+								left_matches_idxs[idx_feats_L]			= min_idx;
+								right_feat_assign[min_idx].first		= idx_feats_L;		// will keep the **BEST** match
+								right_feat_assign[min_idx].second		= min_1;
+							}
+						} // end-if
+						else
 						{
-							// undo the previous one and set the new one
-							left_matches_idxs[right_feat_assign[min_idx].first] = INVALID_IDX;
-							left_matches_idxs[idx_feats_L]			= min_idx;
-							right_feat_assign[min_idx].first		= idx_feats_L;		// will keep the **BEST** match
-							right_feat_assign[min_idx].second		= min_1;
-						}
-					} // end-if
-					else
-					{
-						// check if the right feature has been already assigned
-						if( right_feat_assign[min_idx].first == INVALID_IDX )
-						{
-							left_matches_idxs[idx_feats_L]			= min_idx;
-							right_feat_assign[min_idx].first		= idx_feats_L;		// will keep the **FIRST** match
-							right_feat_assign[min_idx].second		= min_1;
-						}
-					} // end--else
+							// check if the right feature has been already assigned
+							if( right_feat_assign[min_idx].first == INVALID_IDX )
+							{
+								left_matches_idxs[idx_feats_L]			= min_idx;
+								right_feat_assign[min_idx].first		= idx_feats_L;		// will keep the **FIRST** match
+								right_feat_assign[min_idx].second		= min_1;
+							}
+						} // end--else
+					} // end-if- INVALID_IDX
 				} // end--left-for
 			} // end--rows-for
 

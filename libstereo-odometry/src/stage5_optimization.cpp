@@ -255,6 +255,7 @@ bool CStereoOdometryEstimator::m_evalRGN(
 	const TKeyPointList					& list2_l,			// input -- left image coords at time 't+1'
 	const TKeyPointList					& list2_r,			// input -- right image coords at time 't+1'
 	const vector<bool>					& mask,				// input -- vector with same size as input: true --> use point, false --> not use it
+	const vector<TPoint3D>				& lmks,				// input -- projected 'list1_x' points in 3D (computed outside just once)
 	const vector<double>				& deltaPose,        // input -- (w1,w2,w3,t1,t2,t3)
 	const mrpt::utils::TStereoCamera	& stereoCam,		// input -- stereo camera parameters
     Eigen::MatrixXd						& out_newPose,		// output
@@ -264,7 +265,8 @@ bool CStereoOdometryEstimator::m_evalRGN(
 	VOErrorCode							& out_error_code )
 {
 	const size_t nL = list1_l.size();						// number of points to project
-	const size_t n_non_masked = std::count( mask.begin(), mask.end(), true );
+	// const size_t n_non_masked = std::count( mask.begin(), mask.end(), true );
+	const size_t n_non_masked = lmks.size();
 
 	ASSERTMSG_(n_non_masked>0,"Number of non masked points entering evaluation of Gauss Newton is zero!")
 
@@ -274,8 +276,6 @@ bool CStereoOdometryEstimator::m_evalRGN(
 	out_gradient	= Eigen::MatrixXd::Zero(6,1);
 	out_error_code	= voecNone;
 
-    // prepare variables
-
     // gradient, jacobian and hessian (both individual and total)
     Eigen::MatrixXd gi(6,1);
     Eigen::MatrixXd Ji(4,6);
@@ -284,34 +284,6 @@ bool CStereoOdometryEstimator::m_evalRGN(
 
 	// 1. Project 'list1' to 3D according to 'stereoCam'
 	// 2. Back project them again to current frame according to 'deltaPose'
-
-	// shortcut to camera parameters
-	const double & cul = stereoCam.leftCamera.cx();
-    const double & cvl = stereoCam.leftCamera.cy();
-    const double & fl  = stereoCam.leftCamera.fx();
-    const double & cur = stereoCam.rightCamera.cx();
-    const double & fr  = stereoCam.rightCamera.fx();
-	const double & baseline = stereoCam.rightCameraPose[0];
-	
-	MRPT_TODO("Optimize evaluation of Gauss-Newton")
-	// 1. Project to 3D
-    vector<TPoint3D> lmks(n_non_masked);
-	const int octave = 0;
-    for( size_t m = 0, i = 0; m < nL; ++m)
-    {
-		if( !mask[m] ) continue;
-
-		const cv::KeyPoint & featL = list1_l[m];
-		const cv::KeyPoint & featR = list1_r[m];
-
-        const double ul  = featL.pt.x;
-        const double vl  = featL.pt.y;
-        const double ur  = featR.pt.x;
-        const double b_d = baseline/(fl*(cur-ur)+fr*(ul-cul));
-
-        lmks[i] = TPoint3D(b_d*fr*(ul-cul),b_d*fr*(vl-cvl),b_d*fl*fr);				// (X,Y,Z)
-		++i;
-    } // end for m
 
 	// 2. Project back to current image
     vector< pair<TPixelCoordf,TPixelCoordf> > out_pixels;	// left and right coordinates
@@ -372,6 +344,8 @@ bool CStereoOdometryEstimator::m_evalRGN(
         // add it to the total gradient and hessian
         out_gradient += gi;
         H += Hi;
+
+		++i;
     } // end-for
 
     // 4. Solve Gauss-Newton equations
@@ -649,19 +623,20 @@ void CStereoOdometryEstimator::stage5_optimize(
 
 	// -- reserve space for the keypoint lists
 	TKeyPointList list1_l, list1_r, list2_l, list2_r;
-	list1_l.reserve(num_total_matches);
-	list1_r.reserve(num_total_matches);
-	list2_l.reserve(num_total_matches);
-	list2_r.reserve(num_total_matches);
+	list1_l.resize(num_total_matches);
+	list1_r.resize(num_total_matches);
+	list2_l.resize(num_total_matches);
+	list2_r.resize(num_total_matches);
 
 	vector< pair<size_t,size_t> > octave_match_idx_vector;
 	octave_match_idx_vector.reserve(num_total_matches);
 		
 	// -- process each octave
+	size_t point_counter = 0;
 	for( size_t octave = 0; octave < nOctaves; ++octave )
 	{
 		// convert all keypoints to largest scale
-		const size_t scale_norm = std::pow(2,octave);
+		const size_t scale_norm = nOctaves > 1 ? std::pow(2,octave) : 1;
 		const size_t num_matches_this_octave = out_tracked_feats.tracked_pairs[octave].size();
 		for( size_t i = 0; i < num_matches_this_octave; ++i )
 		{
@@ -670,32 +645,39 @@ void CStereoOdometryEstimator::stage5_optimize(
 			const size_t pre_kp_left_idx = out_tracked_feats.prev_imgpair->lr_pairing_data[octave].matches_lr_dm[pre_match_idx].queryIdx;
 			const size_t pre_kp_right_idx = out_tracked_feats.prev_imgpair->lr_pairing_data[octave].matches_lr_dm[pre_match_idx].trainIdx;
 
-			list1_l.push_back( out_tracked_feats.prev_imgpair->left.pyr_feats_kps[octave][pre_kp_left_idx] );
-			list1_r.push_back( out_tracked_feats.prev_imgpair->right.pyr_feats_kps[octave][pre_kp_right_idx] );
+			list1_l[point_counter] = out_tracked_feats.prev_imgpair->left.pyr_feats_kps[octave][pre_kp_left_idx];
+			list1_r[point_counter] = out_tracked_feats.prev_imgpair->right.pyr_feats_kps[octave][pre_kp_right_idx];
 			
-			list1_l.back().pt.x *= scale_norm; // scale normalization
-			list1_l.back().pt.y *= scale_norm; // scale normalization
-			list1_r.back().pt.x *= scale_norm; // scale normalization
-			list1_r.back().pt.y *= scale_norm; // scale normalization
+			if( nOctaves > 1 )
+			{
+				list1_l[point_counter].pt.x *= scale_norm; // scale normalization
+				list1_l[point_counter].pt.y *= scale_norm; // scale normalization
+				list1_r[point_counter].pt.x *= scale_norm; // scale normalization
+				list1_r[point_counter].pt.y *= scale_norm; // scale normalization
+			}
 
 			// current data
 			const size_t cur_match_idx = out_tracked_feats.tracked_pairs[octave][i].second;
 			const size_t cur_kp_left_idx = out_tracked_feats.cur_imgpair->lr_pairing_data[octave].matches_lr_dm[cur_match_idx].queryIdx;
 			const size_t cur_kp_right_idx = out_tracked_feats.cur_imgpair->lr_pairing_data[octave].matches_lr_dm[cur_match_idx].trainIdx;
 
-			list2_l.push_back( out_tracked_feats.cur_imgpair->left.pyr_feats_kps[octave][cur_kp_left_idx] );
-			list2_r.push_back( out_tracked_feats.cur_imgpair->right.pyr_feats_kps[octave][cur_kp_right_idx] );
+			list2_l[point_counter] = out_tracked_feats.cur_imgpair->left.pyr_feats_kps[octave][cur_kp_left_idx];
+			list2_r[point_counter] = out_tracked_feats.cur_imgpair->right.pyr_feats_kps[octave][cur_kp_right_idx];
 
-			list2_l.back().pt.x *= scale_norm; // scale normalization
-			list2_l.back().pt.y *= scale_norm; // scale normalization
-			list2_r.back().pt.x *= scale_norm; // scale normalization
-			list2_r.back().pt.y *= scale_norm; // scale normalization
+			if( nOctaves > 1 )
+			{
+				list2_l[point_counter].pt.x *= scale_norm; // scale normalization
+				list2_l[point_counter].pt.y *= scale_norm; // scale normalization
+				list2_r[point_counter].pt.x *= scale_norm; // scale normalization
+				list2_r[point_counter].pt.y *= scale_norm; // scale normalization
+			}
 
 			octave_match_idx_vector.push_back( make_pair(octave,i) );
+			++point_counter;
 		} // end-number-of-matches
 	} // end-octaves
 
-	// non-max-suppression (only left images)
+	// -- non-max-suppression (only previous left image, the rest will be discarded according to this survivors)
 	// -------------------------------------------
 	vector<bool> survivors(num_total_matches);
 	m_non_max_sup(	list1_l, 
@@ -704,6 +686,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 					out_tracked_feats.prev_imgpair->left.pyr.images[0].getWidth(), 
 					num_total_matches ); 
 
+	// -- save files if desired
 	if( params_general.vo_save_files )
 	{
 		FILE *f_opt = os::fopen("optimization.txt","wt");
@@ -720,9 +703,8 @@ void CStereoOdometryEstimator::stage5_optimize(
 		} // end-for
 		os::fclose(f_opt);
 	} // end-if
-	mrpt::system::pause();
 
-    // Solve Gauss Newton
+    // -- solve Gauss Newton system
 	vector<double>	out_residual;		
 	double			pCost = 0,			// previous cost
 					cCost = 0;			// current cost
@@ -737,20 +719,35 @@ void CStereoOdometryEstimator::stage5_optimize(
 	else if( params_least_squares.use_previous_pose_as_initial )
 		deltaPose = m_last_computed_pose;
 
-	//if( m_verbose_level >= 2 )
-	//{
-	//	cout << endl << "	Initial estimation (w1,w2,w3,t1,t2,t3) ";
-	//	if( params_least_squares.use_custom_initial_pose )
-	//	{
-	//		cout << " (custom): " << endl;
-	//		DUMP_VECTOR(initial_estimation)
-	//	}
-	//	else if( params_least_squares.use_previous_pose_as_initial )
-	//	{
-	//		cout << " (last): " << endl;
-	//		DUMP_VECTOR(m_last_computed_pose)
-	//	}
-	//}
+	// shortcut to camera parameters
+	const double & cul = stereoCam.leftCamera.cx();
+    const double & cvl = stereoCam.leftCamera.cy();
+    const double & fl  = stereoCam.leftCamera.fx();
+    const double & cur = stereoCam.rightCamera.cx();
+    const double & fr  = stereoCam.rightCamera.fx();
+	const double & baseline = stereoCam.rightCameraPose[0];
+	
+	MRPT_TODO("Optimize evaluation of Gauss-Newton")
+	
+	// 1. Project to 3D (only once for all iterations)
+	size_t n_non_masked = std::count( survivors.begin(), survivors.end(), true );
+	const size_t nL = list1_l.size();
+    vector<TPoint3D> lmks(n_non_masked);
+    for( size_t m = 0, i = 0; m < nL; ++m)
+    {
+		if( !survivors[m] ) continue;
+
+		const cv::KeyPoint & featL = list1_l[m];
+		const cv::KeyPoint & featR = list1_r[m];
+
+        const double ul  = featL.pt.x;
+        const double vl  = featL.pt.y;
+        const double ur  = featR.pt.x;
+        const double b_d = baseline/(fl*(cur-ur)+fr*(ul-cul));
+
+        lmks[i] = TPoint3D(b_d*fr*(ul-cul),b_d*fr*(vl-cvl),b_d*fl*fr);				// (X,Y,Z)
+		++i;
+    } // end for m
 	
 	VOErrorCode out_error_code;
     unsigned int timesInc = 0;		// number of times with incremental cost
@@ -763,7 +760,8 @@ void CStereoOdometryEstimator::stage5_optimize(
 		bool cond = m_evalRGN( 
 				list1_l, list1_r, list2_l, list2_r,
 				survivors,				// in --> masks elements to use
-                deltaPose,				// in
+                lmks,					// in
+				deltaPose,				// in
                 stereoCam,				// in
                 out_newPose,			// out	--> size 6x1
                 out_grad,				// out	--> size 6x1
@@ -831,7 +829,7 @@ void CStereoOdometryEstimator::stage5_optimize(
     // keep only the inliers!
 	for( size_t i = 0; i < out_residual.size(); ++i )
     {
-		if( out_residual[i] < params_least_squares.residual_threshold )
+		if( out_residual[i] > params_least_squares.residual_threshold )
 			survivors[i] = false;
         else
 		{
@@ -870,8 +868,25 @@ void CStereoOdometryEstimator::stage5_optimize(
     }
     VERBOSE_LEVEL(2) << "	Inliers: " << inliers.tracked_pairs[0].size() << endl;
 #endif
-    // update the tracked IDs (remove outliers)
+    // update 3D landmarks (remove outliers)
     // ----------------------------------------------------
+	n_non_masked = std::count( survivors.begin(), survivors.end(), true );
+    lmks.resize(n_non_masked);
+    for( size_t m = 0, i = 0; m < nL; ++m)
+    {
+		if( !survivors[m] ) continue;
+
+		const cv::KeyPoint & featL = list1_l[m];
+		const cv::KeyPoint & featR = list1_r[m];
+
+        const double ul  = featL.pt.x;
+        const double vl  = featL.pt.y;
+        const double ur  = featR.pt.x;
+        const double b_d = baseline/(fl*(cur-ur)+fr*(ul-cul));
+
+        lmks[i] = TPoint3D(b_d*fr*(ul-cul),b_d*fr*(vl-cvl),b_d*fl*fr);				// (X,Y,Z)
+		++i;
+    } // end for m
 
     // final refinement starting at
     // ----------------------------------------------------
@@ -892,6 +907,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 		bool cond = m_evalRGN( 
 				list1_l, list1_r, list2_l, list2_r,
 				survivors,			// in --> masks elements to use
+				lmks,				// in --> 3D projections
                 deltaPose,			// in
                 stereoCam,			// in
                 out_newPose,		// out	--> size 6x1
@@ -985,12 +1001,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 	result.outPose = CPose3D(rvt.getInverse()); // this is the pose of the current stereo frame wrt the previous one
 
     if( !params_least_squares.use_custom_initial_pose && params_least_squares.use_previous_pose_as_initial )
-	{
 		m_last_computed_pose = deltaPose;
-		cout << "	Saving 'm_last_computed_pose': ";
-		DUMP_VECTOR(m_last_computed_pose);
-	}
-	VERBOSE_LEVEL(2) << "   :: OUTPOSE: " << result.outPose << endl;
 
     // set output result
     result.tracked_feats_from_last_frame	= m_num_tracked_pairs_from_last_frame;
