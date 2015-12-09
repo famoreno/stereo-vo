@@ -569,13 +569,15 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			{
 				const size_t imgH = input_im.rows;
 				const size_t imgW = input_im.cols;
+				vector<bool> dummy;
 				m_non_max_sup( 
 					kps_to_detect[octave], // params_detect.orb_nfeats
 					feats_vector, 
 					desc_aux, 
 					img_data.pyr_feats_kps[octave], 
 					img_data.pyr_feats_desc[octave], 
-					imgH, imgW );
+					imgH, imgW,
+					dummy );
 			}
 			else if( params_detect.nmsMethod == TDetectParams::nmsmAdaptive )
 			{

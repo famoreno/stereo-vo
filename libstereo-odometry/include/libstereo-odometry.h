@@ -839,7 +839,7 @@ namespace rso
 					cv::Mat						& out_kp_desc,
 					const size_t				& imgH,
 					const size_t				& imgW,
-					vector<bool>				& survivors = vector<bool>() );
+					vector<bool>				& survivors );
 
 		/** Performs non maximal suppression for the detected features without taking into account the descriptors (auxiliary method)
         */
