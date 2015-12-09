@@ -1,0 +1,25 @@
+language: cpp
+sudo: true
+
+compiler: 
+  - gcc
+  - clang  
+
+before_install:
+  - sudo add-apt-repository ppa:joseluisblancoc/mrpt -y
+  - sudo apt-get update -d
+
+install:
+  - sudo apt-get install build-essential pkg-config cmake doxygen libmrpt-dev libopencv-dev
+
+script:
+  - bash .travis.sh
+
+env:
+  global:
+  - GH_REF: github.com/famoreno/stereo-vo.git
+  - secure: "PDe9TFVojidjOhxY3ekJ2jBoxww/F1CUt+xEY1YD7Z7/ciOeCEuQPoZqsw8HMJDtPF94QIAbq2QlbprwhoKupNVZ5c+Bz7d6OEW89r5PsyDnt9/vsSuWaJlK82GED+cGe7cLp/Ighjs0ruqX6ceLJUkikMvaS3sxKz4QtNqtVvik5QeJpryxWMd1QmprZHdQGUzPZcEtrmULtMolecyPzLx8cm8i/lXHg10oZaVnEZtRlCR1m4JLuz8VE2PHOS4T9uHNeYsnRdSQ3FI8Ht31KuZGMBzmgmJXnQPXczofyxTK1MFvXGm+NjMuFgm2IULRASeOy3VvGRPc/OzROue2u5sY9A1uxYvnrlotrtclz/elQDaP9fAlz+0ng8lFL9NEVkv6pbIF97lcrSmDcsPCDxONURFcjqrKsnYidKu0Os3NZBA7ML2VAUtmCToX/HJGoAUzFfeMFi2Tg4gCySthVygVFgyi2yBi4Bi8YNnXNPr378fKqlrQujngM/ZauwJNAtGh4OypmQf5XBYMJ0XxIcTDZ+ZU/SHlSPHGEyO4yUqD7Wotxa7z4P0nNvvGTMzq/LcWZe0S2GE/ZPST+if/qgw7aQ8sVLyx6z17FSUpgECmdHXDjE8Dj7I8wLl/+sc15Ic3EqQa551HVU69Ce+LZ+2mv1d3FI1gGOPpI5Z9Q/4="
+  matrix:
+  - TASK="build"
+  - TASK="docs"
+

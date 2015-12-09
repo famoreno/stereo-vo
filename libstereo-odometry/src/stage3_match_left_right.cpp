@@ -19,7 +19,7 @@
    | along with this program.  If not, see <http://www.gnu.org/licenses/>.   |
    +-------------------------------------------------------------------------+ */
 
-#define USE_MATCHER 0			// 0 : Bruteforce -- 1 : Standard
+#define USE_MATCHER 0			// 0 : Bruteforce -- 1 : Standard with ORB descriptors -- 2 : SAD
 
 #include <libstereo-odometry.h>
 #include "internal_libstereo-odometry.h"

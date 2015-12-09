@@ -4,4 +4,4 @@ install*
 *.layout
 CMakeFiles/
 CMakeLists.txt.user
-
+libstereo-odometry/doc

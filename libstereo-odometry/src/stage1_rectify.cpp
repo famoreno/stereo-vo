@@ -88,7 +88,7 @@ void CStereoOdometryEstimator::stage1_prepare_rectify(
 
 	if( this->params_general.vo_save_files )
 	{
-		obs->imageLeft.saveToFile( mrpt::format("%s/left_image_%04d.jpg",params_general.vo_out_dir.c_str(),m_it_counter).c_str() );
-		obs->imageRight.saveToFile( mrpt::format("%s/right_image_%04d.jpg",params_general.vo_out_dir.c_str(),m_it_counter).c_str() );
+		obs->imageLeft.saveToFile( mrpt::format("%s/left_image_%04d.png",params_general.vo_out_dir.c_str(),m_it_counter).c_str() );
+		obs->imageRight.saveToFile( mrpt::format("%s/right_image_%04d.png",params_general.vo_out_dir.c_str(),m_it_counter).c_str() );
 	}
 } // end-stage1_rectify
