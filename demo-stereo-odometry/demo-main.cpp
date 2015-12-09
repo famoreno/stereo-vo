@@ -132,7 +132,7 @@ int main(int argc, char**argv)
 		else
 		{
 			// Run from a set of images in a directory
-			myCam.loadConfig( mrpt::utils::CConfigFile(arg_img_dir_cfg_file.getValue()), "IMG_DIR" );
+			myCam.loadConfig( mrpt::utils::CConfigFile(arg_img_dir_cfg_file.getValue()), "IMG_SOURCE" );
 
 			cout << "Running from image directory... " << endl;
 		}

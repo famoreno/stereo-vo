@@ -156,18 +156,6 @@ namespace rso
 					const vector<double>				& ini_estimation = vector<double>(6,0) );	// initial estimation of the pose (if any)	
 
 		// this custom method computes the coords of a set of features after a change in pose
-		// TO DO: CONSIDER REMOVE THIS
-		/*void getProjectedCoords(
-					const vector<cv::DMatch>			& pre_matches,						// all the matches in the previous keyframe
-					const vector<cv::KeyPoint>			& pre_left_feats,
-					const vector<cv::KeyPoint>			& pre_right_feats,					// all the features in the previuous keyframe
-					const vector<bool>					& other_matches_tracked,			// tracking info for OTHER matches [size=A]
-					const mrpt::utils::TStereoCamera	& stereo_camera,					// stereo camera intrinsic and extrinsic parameters
-					const CPose3D						& change_pose,						// the estimated change in pose between keyframes
-					vector< pair<TPixelCoordf,TPixelCoordf> > & pro_pre_feats );			// [out] coords of the features in the left image [size=B (only for those whose 'other_matches_tracked' entry is false]
-		*/
-
-		// this custom method computes the coords of a set of features after a change in pose
 		void getProjectedCoords(
 					const vector<cv::DMatch>			& pre_matches,						// all the matches in the previous keyframe
 					const vector<cv::KeyPoint>			& pre_left_feats,
@@ -192,20 +180,6 @@ namespace rso
 			params_least_squares.dumpToConsole();
 			params_gui.dumpToConsole();
 		}
-
-		/*void insertDataInEngine(
-			const vector<cv::KeyPoint>	& pre_left_feats,
-			const cv::Mat				& pre_right_desc,
-			const vector<cv::KeyPoint>	& pre_right_feats,
-			const cv::Mat				& pre_left_desc,
-			const vector<cv::DMatch>	& pre_matches,
-			const vector<size_t>		& pre_matches_ID,
-			const vector<cv::KeyPoint>	& cur_left_feats,
-			const cv::Mat				& cur_right_desc,
-			const vector<cv::KeyPoint>	& cur_right_feats,
-			const cv::Mat				& cur_left_desc,
-			const vector<cv::DMatch>	& cur_matches,
-			const vector<size_t>		& cur_matches_ID );*/
 
 	/** @} */  // End of main API methods
 	//---------------------------------------------------------------
@@ -459,8 +433,8 @@ namespace rso
 			TLeftRightMatchParams();
 
 			// Stereo matching method enumeration
-			enum smMethod { smDescBF = 0, smDescRbR, smSAD };
-			smMethod	match_method;				//!< The selected method to perform stereo matching. Compatibility: {smSAD} -> {ORB,KLT,FAST[ER],FAST[ER]+ORB} and {smDescBF,smDescRbR} -> {ORB,FAST[ER]+ORB}
+			enum TSMMethod { smDescBF = 0, smDescRbR, smSAD };
+			TSMMethod	match_method;				//!< The selected method to perform stereo matching. Compatibility: {smSAD} -> {ORB,KLT,FAST[ER],FAST[ER]+ORB} and {smDescBF,smDescRbR} -> {ORB,FAST[ER]+ORB}
 			
 			// SAD
 			uint32_t	sad_max_distance;				//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
@@ -534,11 +508,7 @@ namespace rso
 		/** Changes the verbosity level: 0=None (only critical msgs), 1=verbose, 2=so verbose you'll have to say "Stop!" */
 		inline void setVerbosityLevel(int level) { m_verbose_level = level; }
 
-		/** Sets and gets FAST threshold */
-		//inline int getFASTThreshold( ) { return params_detect.initial_FAST_threshold; }
-		//inline void setFASTThreshold( int value ) { params_detect.initial_FAST_threshold = std::min(30,std::max(5,value)); }
-		//inline void resetFASTThreshold( ) { params_detect.initial_FAST_threshold = 20;}
-
+		/** Sets and gets FAST detector threshold (within ORB) */
 		inline int getFASTThreshold( ) { return m_current_fast_th; }
 		inline void setFASTThreshold( int value ) { m_current_fast_th = std::min(params_detect.fast_max_th,std::max(params_detect.fast_min_th,value)); }
 		inline void resetFASTThreshold( ) { m_current_fast_th = params_detect.initial_FAST_threshold; }
@@ -599,7 +569,7 @@ namespace rso
 			if( sections[2].size() > 0 )	// left right matching
 			{
 				// general
-				params_lr_match.match_method				= static_cast<TLeftRightMatchParams::smMethod>(iniFile.read_int(sections[2], "match_method", params_lr_match.match_method, false) );
+				params_lr_match.match_method				= static_cast<TLeftRightMatchParams::TSMMethod>(iniFile.read_int(sections[2], "match_method", params_lr_match.match_method, false) );
 				params_lr_match.max_y_diff				    = iniFile.read_double(sections[2], "max_y_diff", params_lr_match.max_y_diff, false);
 				params_lr_match.enable_robust_1to1_match	= iniFile.read_bool(sections[2], "enable_robust_1to1_match", params_lr_match.enable_robust_1to1_match, false);
 				params_lr_match.rectified_images	        = iniFile.read_bool(sections[2], "rectified_images", params_lr_match.rectified_images, false);
@@ -684,19 +654,24 @@ namespace rso
 		} // end loadParamsFromConfigFileName
 
 		/** Sets/resets the match IDs generator */
-		void inline resetIds( const bool reset = true ) { m_reset = reset; }
+		void inline setThisFrameAsKF()
+		{
+			ASSERTMSG_(m_current_imgpair,"[VO Error -- setThisFrameAsKF] Current frame does not exist")
+			ASSERTMSG_(m_current_imgpair->lr_pairing_data.size() > 0,"[VO Error -- setThisFrameAsKF] No existing lr_pairing_data")
+			
+			const size_t octave = 0; 
+			const vector<size_t> & v = m_current_imgpair->lr_pairing_data[octave].matches_IDs;
+			m_last_kf_max_id = *std::max_element(v.begin(),v.end());
+		}
+		void inline resetIds() { m_reset = true; }
 		void inline setIds( const vector<size_t> & ids ) {	// only for ORB (since it is just one scale)
-			if( this->m_current_imgpair ) {
-				this->m_current_imgpair->lr_pairing_data[0].matches_IDs.resize(ids.size());
+			if( m_current_imgpair ) {
+				m_current_imgpair->lr_pairing_data[0].matches_IDs.resize(ids.size());
 				std::copy(ids.begin(), ids.end(), m_current_imgpair->lr_pairing_data[0].matches_IDs.begin());
-				//this->m_current_imgpair->orb_matches_ID.resize(ids.size()); 
-				//std::copy(ids.begin(), ids.end(), this->m_current_imgpair->orb_matches_ID.begin()); 
 			}
 			else {
-				this->m_prev_imgpair->lr_pairing_data[0].matches_IDs.resize(ids.size()); 
+				m_prev_imgpair->lr_pairing_data[0].matches_IDs.resize(ids.size()); 
 				std::copy(ids.begin(), ids.end(), m_prev_imgpair->lr_pairing_data[0].matches_IDs.begin()); 
-				//this->m_prev_imgpair->orb_matches_ID.resize(ids.size()); 
-				//std::copy(ids.begin(), ids.end(), this->m_prev_imgpair->orb_matches_ID.begin()); 
 			}
 		} // end-setIds
 
@@ -705,23 +680,32 @@ namespace rso
 		CImage getCopyCurrentImageLeft() { CImage aux; params_gui.show_gui ? aux.copyFromForceLoad(m_gui_info->img_left) : aux.copyFromForceLoad(m_next_gui_info->img_left); return aux; }
 		CImage getCopyCurrentImageRight() { CImage aux; params_gui.show_gui ? aux.copyFromForceLoad(m_gui_info->img_right) : aux.copyFromForceLoad(m_next_gui_info->img_right); return aux; }
 
+		vector<size_t> & getRefCurrentIDs(const size_t octave) { return m_current_imgpair->lr_pairing_data[octave].matches_IDs; }
+
 		/** Returns copies to the inner structures */
 		void getValues( vector<cv::KeyPoint> & leftKP, vector<cv::KeyPoint> & rightKP,
                         cv::Mat &leftDesc, cv::Mat &rightDesc,
-                        vector<cv::DMatch> & matches )
+                        vector<cv::DMatch> & matches,
+						vector<size_t> & matches_id )
 		{
-		    leftKP.resize( m_current_imgpair->left.orb_feats.size() );
-		    std::copy( m_current_imgpair->left.orb_feats.begin(), m_current_imgpair->left.orb_feats.end(), leftKP.begin() );
+			const size_t octave = 0; // only for ORB features
+			leftKP.resize( m_current_imgpair->left.pyr_feats_kps[octave].size() );
+		    std::copy( m_current_imgpair->left.pyr_feats_kps[octave].begin(), m_current_imgpair->left.pyr_feats_kps[octave].end(), leftKP.begin() );
 
-		    rightKP.resize( m_current_imgpair->right.orb_feats.size() );
-		    std::copy( m_current_imgpair->right.orb_feats.begin(), m_current_imgpair->right.orb_feats.end(), rightKP.begin() );
+		    rightKP.resize( m_current_imgpair->right.pyr_feats_kps[octave].size() );
+		    std::copy( m_current_imgpair->right.pyr_feats_kps[octave].begin(), m_current_imgpair->right.pyr_feats_kps[octave].end(), rightKP.begin() );
 
-            m_current_imgpair->left.orb_desc.copyTo( leftDesc );
-		    m_current_imgpair->right.orb_desc.copyTo( rightDesc );
+            m_current_imgpair->left.pyr_feats_desc[octave].copyTo( leftDesc );
+		    m_current_imgpair->right.pyr_feats_desc[octave].copyTo( rightDesc );
 
-		    matches.resize( m_current_imgpair->orb_matches.size() );
-		    std::copy( m_current_imgpair->orb_matches.begin(), m_current_imgpair->orb_matches.end(), matches.begin() );
+			matches.resize( m_current_imgpair->lr_pairing_data[octave].matches_lr_dm.size() );
+		    std::copy( m_current_imgpair->lr_pairing_data[octave].matches_lr_dm.begin(), m_current_imgpair->lr_pairing_data[octave].matches_lr_dm.end(), matches.begin() );
+
+			matches_id.resize( m_current_imgpair->lr_pairing_data[octave].matches_IDs.size() );
+		    std::copy( m_current_imgpair->lr_pairing_data[octave].matches_IDs.begin(), m_current_imgpair->lr_pairing_data[octave].matches_IDs.end(), matches_id.begin() );
 		} // end getValues
+
+		inline void setMaxMatchID( const size_t id ){ m_last_match_ID = id; }
 
 	private:
 		/** Profiler for all SRBA operations
@@ -733,6 +717,7 @@ namespace rso
 		// matches id management (if 'params_general.vo_use_matches_ids' is set)
         size_t                          m_num_tracked_pairs_from_last_kf;
 		size_t							m_num_tracked_pairs_from_last_frame;
+		size_t							m_last_kf_max_id;						//!< Maximum ID of a match belonging to certain frame defined as 'KF'
 		bool							m_reset;
 		vector< vector<size_t> >		m_kf_ids;
 		size_t                          m_last_match_ID;						//!< Identificator of the last match ID
@@ -801,7 +786,10 @@ namespace rso
 			/** The idx of the ORB matches */
 			std::vector<size_t> orb_matches_ID;		// <----- to be deleted
 
-			TImagePairData() : timestamp(INVALID_TIMESTAMP)  { }
+			/** Image size. Useful when calling to 'getChangeInPose' which likely won't be able to access image size, since it is just a custom call to the optimization process */
+			size_t img_h, img_w;
+
+			TImagePairData() : timestamp(INVALID_TIMESTAMP), img_h(0), img_w(0) { }
 		};
 
 		typedef stlplus::smart_ptr<TImagePairData> TImagePairDataPtr;
@@ -815,8 +803,6 @@ namespace rso
 			  * Indices are as seen in \a matches_lr
 			  */
 			std::vector<vector_index_pairs_t>  tracked_pairs;
-
-			/** Number of features tracked from the last reset (useful for slam applications) */
 		};
 
         /** At any time step, the current (latest) and previous pair of stereo images,
@@ -834,16 +820,8 @@ namespace rso
         */
 		void m_featlist_to_kpslist( CStereoOdometryEstimator::TImagePairData::img_data_t & img_data );
         
-		/** Performs m_non_max_suppression for the detected features
+		/** Performs adaptive non maximal suppression for the detected features
         */
-		void m_non_max_sup(
-					const vector<cv::KeyPoint>	& keypoints,				// IN
-					vector<bool>				& survivors,				// IN/OUT
-					const size_t				& imgH,						// IN
-					const size_t				& imgW,						// IN
-					const size_t				& num_out_points ) const;	// IN
-
-        void m_non_max_sup( TImagePairData::img_data_t &data, size_t octave );	// <-- useless?? consider remove
 		void m_adaptive_non_max_sup(
 					const size_t				& num_out_points,
 					const vector<cv::KeyPoint>	& keypoints,
@@ -852,6 +830,8 @@ namespace rso
 					cv::Mat						& out_kp_desc,
 					const double				& min_radius_th = 0 );
 
+		/** Performs non maximal suppression for the detected features
+        */
 		void m_non_max_sup(
 					const size_t				& num_out_points,
 					const vector<cv::KeyPoint>	& keypoints,
@@ -861,6 +841,15 @@ namespace rso
 					const size_t				& imgH,
 					const size_t				& imgW,
 					vector<bool>				& survivors = vector<bool>() );
+
+		/** Performs non maximal suppression for the detected features without taking into account the descriptors (auxiliary method)
+        */
+		void m_non_max_sup(
+					const vector<cv::KeyPoint>	& keypoints,				// IN
+					vector<bool>				& survivors,				// IN/OUT
+					const size_t				& imgH,						// IN
+					const size_t				& imgW,						// IN
+					const size_t				& num_out_points ) const;	// IN
 
         /** Performs one iteration of a robust Gauss-Newton minimization for the visual odometry
         */
@@ -878,18 +867,6 @@ namespace rso
 				vector<double>						& out_residual,
 				double								& out_cost,
 				VOErrorCode							& out_error_code );
-
-        bool m_evalRGN(
-                const CStereoOdometryEstimator::TTrackingData	& tracked_feats,
-                const mrpt::utils::TStereoCamera				& cam,
-                const vector<double>							& deltaPose,
-				const int										& cnt,				// input iteration counter
-				const vector<TPoint3D>							& lmks,
-                Eigen::MatrixXd									& out_newPose,
-                Eigen::MatrixXd									& out_gradient,
-                vector<double>									& out_residual,
-                double											& out_cost,
-				VOErrorCode										& out_error_code );
 
         void m_pinhole_stereo_projection(
                 const vector<TPoint3D> &lmks,                           // [input]  the input 3D landmarks

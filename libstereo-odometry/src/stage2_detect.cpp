@@ -48,7 +48,7 @@ CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 	non_maximal_suppression(true),
 	KLT_win(4),
 	minimum_KLT_response(10),
-	minimum_ORB_response(0.005),
+	minimum_ORB_response(0.),
 	detect_method(dmFASTER),
 	nmsMethod(nmsmStandard),
 	orb_nfeats(500),
@@ -62,7 +62,10 @@ CStereoOdometryEstimator::TDetectParams::TDetectParams() :
 // [i/o]	data		<- image data containing the features
 // [i]		octave		<- number of the octave to process
 // -------------------------------------------------
-void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & data, size_t octave, const bool order = true )
+void CStereoOdometryEstimator::m_update_indexes( 
+					TImagePairData::img_data_t & data, 
+					size_t octave, 
+					const bool order = true )
 {
 	// preliminary assertions
 	ASSERTDEBMSG_(octave < data.pyr_feats_index.size(),"Input 'octave' value is larger than pyramid size")
@@ -126,6 +129,15 @@ void CStereoOdometryEstimator::m_update_indexes( TImagePairData::img_data_t & da
     } // end-for
 } // end-m_update_indexes
 
+// -------------------------------------------------
+//	m_adaptive_non_max_sup (private)
+// [i]		num_out_points		<- number of desired output keypoints
+// [i]		keypoints			<- input keypoints
+// [i]		descriptors			<- input descriptors
+// [o]		out_kp_rad			<- output keypoints
+// [o]		out_kp_desc			<- output descriptors
+// [i]		min_radius_th		<- minimum distance between output points (optional, def:0)
+// -------------------------------------------------
 void CStereoOdometryEstimator::m_adaptive_non_max_sup( 
 					const size_t				& num_out_points, 
 					const vector<KeyPoint>		& keypoints, 
@@ -135,17 +147,6 @@ void CStereoOdometryEstimator::m_adaptive_non_max_sup(
 					const double				& min_radius_th )
 {
 	// TO DO : if detection method != ORB or FAST+ORB --> throw exception
-	// do it for both images
-
-	// save before
-	/** /
-	{
-		FILE *f = mrpt::system::os::fopen("antes.txt","wt");
-		for( size_t k = 0; k < keypoints.size(); ++k )
-			mrpt::system::os::fprintf(f,"%.2f %.2f\n",keypoints[k].pt.x,keypoints[k].pt.y);
-		mrpt::system::os::fclose(f);
-	}
-	/**/
 
 	const size_t actual_num_out_points = min(num_out_points,keypoints.size());
 	if( actual_num_out_points == 0 ) return; // nothing to do here
@@ -211,206 +212,16 @@ void CStereoOdometryEstimator::m_adaptive_non_max_sup(
 			if( use_desc ) out_kp_desc.push_back( descriptors.row( sorted_indices[i] ) );
 		}
 	}
-	// save after
-	/** /
-	{
-		FILE *f = mrpt::system::os::fopen("despues.txt","wt");
-		for( size_t k = 0; k < out_kp_rad.size(); ++k )
-			mrpt::system::os::fprintf(f,"%.2f %.2f\n",out_kp_rad[k].pt.x,out_kp_rad[k].pt.y);
-		mrpt::system::os::fclose(f);
-	}
-	/**/
-
 } // end-m_adaptive_non_max_suppression
 
-void CStereoOdometryEstimator::m_non_max_sup( TImagePairData::img_data_t &data, size_t octave )	// <-- useless?? consider to remove
-{
-    /** /
-    {
-        FILE *fb = mrpt::system::os::fopen("fbefore.txt","wt");
-        for (size_t i=0;i<data.pyr_feats[octave].size();i++)
-        {
-            mrpt::system::os::fprintf(fb,"%d %d %.3f\n",
-                                      data.pyr_feats[octave][i].pt.x,
-                                      data.pyr_feats[octave][i].pt.y,
-                                      data.pyr_feats[octave][i].response
-                                      );
-        }
-        mrpt::system::os::fclose(fb);
-    }
-	/**/
-
-    const mrpt::vector_size_t &idxL	= data.pyr_feats_index[octave];				// the index of the feat
-    const size_t nColsMax			= data.pyr.images[octave].getWidth()-1;		// max number of columns
-    const size_t nRowsMax			= data.pyr.images[octave].getHeight()-1;	// max number of rows
-
-    vector<bool> featsToDelete(data.pyr_feats[octave].size(), false);
-    for (size_t i=0;i<data.pyr_feats[octave].size();i++)
-    {
-        const TSimpleFeature &featL		= data.pyr_feats[octave][i];			// this feat
-        if( featL.response == 0 ) // delete this (was too close to get the KLT value)
-        {
-            // cout << " [delete] (response == 0)" << endl;
-            featsToDelete[i] = true;
-            continue;
-        }
-
-        const size_t col_min			= std::max(0,featL.pt.x-2);						// from this col
-        const size_t col_max			= std::min(int(nColsMax),featL.pt.x+2);			// ... to this col
-        const size_t idx_feats_L0		= idxL[max(0,featL.pt.y-3)];					// from this row
-        const size_t idx_feats_L1		= idxL[min(int(nRowsMax),featL.pt.y+2)];		// ... to this row
-
-        if( featsToDelete[i] )
-        {
-            // cout << " [already set to be deleted] " << endl;
-            continue;
-        }
-
-        // feats to test
-		// cout << "--> From " << idx_feats_L0 << " to " << idx_feats_L1 << endl;
-
-        // search for the maximum in a 5x5 window
-        float max_response      = featL.response;
-        //size_t max_response_idx = i;
-
-        for (size_t idx_feats_L = idx_feats_L0; idx_feats_L < idx_feats_L1; ++idx_feats_L)
-        {
-            if(idx_feats_L == i)        // not check with itself
-                continue;
-
-		    // cout << "   with " << idx_feats_L;
-
-            if( featsToDelete[idx_feats_L] )
-            {
-                // cout << " [already set to be deleted] " << endl;
-                continue;
-            }
-
-            // this feature hasn't been visited yet
-            TSimpleFeature &ofeatL = data.pyr_feats[octave][idx_feats_L];
-
-            if( ofeatL.pt.x < int(col_min) || ofeatL.pt.x > int(col_max) )
-            {
-		        // cout << " [out of range] -- (" << ofeatL.pt.x << "," << ofeatL.pt.y << ")" << endl;
-                continue;
-            }
-
-            // cout << " [res = " << ofeatL.response << " at " << ofeatL.pt.x << "," << ofeatL.pt.y << "]";
-
-            if( ofeatL.response > max_response )
-            {
-                // cout << " -- max (" << ofeatL.response << " vs " << max_response << ")" << endl;
-                max_response        = ofeatL.response;
-                // max_response_idx    = idx_feats_L;
-                featsToDelete[i]    = true;
-            }
-            else
-            {
-                featsToDelete[idx_feats_L] = true;
-            }
-
-        } // end for search maximun in window
-    // mrpt::system::pause();
-    } // end-for-feature
-
-//         mrpt::gui::CDisplayWindow win_before, win_after;
-//         win_before.showImageAndPoints(data.pyr.images[octave],data.pyr_feats[octave]);
-
-    // remove bad features
-    TSimpleFeatureList::iterator it = data.pyr_feats[octave].begin();
-    size_t count = 0;
-    while( it != data.pyr_feats[octave].end() )
-    {
-        if( featsToDelete[count] )
-        {
-            it = data.pyr_feats[octave].erase( it );
-        }
-        else
-        {
-            ++it;
-        }
-        count++;
-    }
-
-    /**/
-    {
-        FILE *fa = mrpt::system::os::fopen("fafter.txt","wt");
-        for (size_t i=0;i<data.pyr_feats[octave].size();i++)
-        {
-            mrpt::system::os::fprintf(fa,"%d %d %.3f\n",
-                                      data.pyr_feats[octave][i].pt.x,
-                                      data.pyr_feats[octave][i].pt.y,
-                                      data.pyr_feats[octave][i].response
-                                      );
-        }
-        mrpt::system::os::fclose(fa);
-    }
-    /**/
-
-//         win_after.showImageAndPoints(data.pyr.images[octave],data.pyr_feats[octave]);
-//        mrpt::system::pause();
-
-    // update indexes
-	m_update_indexes(data,octave);
-
-#if 0
-	vector<size_t>::iterator fromRow = data.pyr_feats_index[octave].begin(), toRow;
-
-    size_t feats_till_now = 0;
-    size_t current_row = 0;
-    for( size_t idx_feats = 0; idx_feats < data.pyr_feats[octave].size(); ++idx_feats)
-    {
-        const TSimpleFeature &feat = data.pyr_feats[octave][idx_feats];
-        if( idx_feats == 0 )
-        {
-            current_row = feat.pt.y;
-            toRow = data.pyr_feats_index[octave].begin()+current_row;
-            fill( fromRow, toRow, 0 );  // fill with zeros
-            fromRow = toRow;
-            continue;
-        }
-
-        if( feat.pt.y == int(current_row) )
-        {
-            ++feats_till_now;
-            continue;
-        }
-        current_row = feat.pt.y;
-
-        toRow = data.pyr_feats_index[octave].begin()+current_row;
-        fill( fromRow, toRow, ++feats_till_now );
-        fromRow = toRow;
-    }
-#endif
-    /** /
-    {
-        FILE *fia = mrpt::system::os::fopen("fiafter.txt","wt");
-        for (size_t i=0;i<data.pyr_feats_index[octave].size();i++)
-            mrpt::system::os::fprintf(fia,"%lu\n", data.pyr_feats_index[octave][i]);
-        mrpt::system::os::fclose(fia);
-    }
-    /**/
-
-    //const vector_size_t & idxL = data.pyr_feats_index[octave];
-    //const size_t nRowsMax = idxL.size()-1;
-    //for (size_t y=0;y<nRowsMax;y++)
-    //{
-    //	size_t idx_feats_L0, idx_feats_L1;
-    //	y == 0 ? idx_feats_L0 = idxL[y] : idx_feats_L0 = idxL[y-1];					// one less row
-    //	y == nRowsMax-1 ? idx_feats_L1 = idxL[y] : idx_feats_L1 = idxL[y+1];		// one more row
-    //
-    //	for (size_t idx_feats_L=idx_feats_L0;idx_feats_L<idx_feats_L1;idx_feats_L++)
-    //	{
-    //		const TSimpleFeature &featL = data.pyr_feats[octave][idx_feats_L];
-    //		if( featL.response )
-
-
-    //	} // end idfeats
-
-    //} // end for nRowsMax
-
-} // end m_non_max_sup
-
+// -------------------------------------------------
+//	m_non_max_sup (private) (auxiliary)
+// [i]		keypoints			<- input keypoints
+// [i/o]	survivors			<- input mask which will be updated
+// [i]		imgH				<- image height
+// [i]		imgW				<- image width
+// [i]		num_out_points		<- number of desired points
+// -------------------------------------------------
 void CStereoOdometryEstimator::m_non_max_sup(
 					const vector<KeyPoint>		& keypoints,				// IN
 					vector<bool>				& survivors,				// IN/OUT
@@ -471,6 +282,17 @@ void CStereoOdometryEstimator::m_non_max_sup(
 	} // end-while
 }
 
+// -------------------------------------------------
+//	m_non_max_sup (private)
+// [i]		num_out_points		<- number of desired output keypoints
+// [i]		keypoints			<- input keypoints
+// [i]		descriptors			<- input descriptors
+// [o]		out_kp				<- output keypoints
+// [o]		out_kp_desc			<- output descriptors
+// [i]		imgH				<- image height
+// [i]		imgW				<- image width
+// [i/o]	survivors			<- input mask which will be updated
+// -------------------------------------------------
 void CStereoOdometryEstimator::m_non_max_sup(
 					const size_t				& num_out_points, 
 					const vector<KeyPoint>		& keypoints, 
@@ -660,42 +482,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 
 			m_profiler.enter(sProfileName.c_str());
 		}
-#if 0
-		// perform subpixel (it seems to be too slow)
-		{
-			FILE *fo = mrpt::system::os::fopen("fbef.txt","wt");
-			for( vector<KeyPoint>::iterator it = img_data.orb_feats.begin(); it != img_data.orb_feats.end(); ++it )
-				mrpt::system::os::fprintf(fo,"%.2f %.2f\n", it->pt.x, it->pt.y );
-			mrpt::system::os::fclose(fo);
-		}
 
-		CTimeLogger tictac;
-		tictac.enter("kp->p");
-		
-		std::vector<Point2f> ofeats(img_data.orb_feats.size());
-		for( int k = 0; k < img_data.orb_feats.size(); ++k )
-			ofeats[k] = img_data.orb_feats[k].pt;
-
-		tictac.leave("kp->p");
-
-		tictac.enter("subpx");
-		cv::cornerSubPix( img, ofeats/*img_data.orb_feats*/, Size(5,5), Size(1,1), TermCriteria( cv::TermCriteria::COUNT, 20, 1e-3 ) );
-		tictac.leave("subpx");
-
-		tictac.enter("p->kp");
-
-		for( int k = 0; k < img_data.orb_feats.size(); ++k )
-			img_data.orb_feats[k].pt = ofeats[k];
-		
-		tictac.leave("p->kp");
-
-		{
-			FILE *fo = mrpt::system::os::fopen("faft.txt","wt");
-			for( vector<KeyPoint>::iterator it = img_data.orb_feats.begin(); it != img_data.orb_feats.end(); ++it )
-				mrpt::system::os::fprintf(fo,"%.2f %.2f\n", it->pt.x, it->pt.y );
-			mrpt::system::os::fclose(fo);
-		}
-#endif
 		// ***********************************
 		// FAST+ORB method
 		// ***********************************
@@ -765,18 +552,6 @@ void CStereoOdometryEstimator::stage2_detect_features(
                 else f.response = 0;
             } // end-for
 
-			/** /
-            // perform non-maximal suppression [5x5] window (if enabled)
-            if( params_detect.non_maximal_suppression )
-            {
-                // Non-maximal supression using KLT response
-                const string subSectionName2 = mrpt::format("stg2.detect.non-max.oct=%u",static_cast<unsigned int>(octave));
-                m_profiler.enter(subSectionName2.c_str());
-                m_non_max_sup( img_data, octave );
-                m_profiler.leave(subSectionName2.c_str());
-            } // end non-maximal suppression
-			/**/
-
 			// convert to TKeyPointList (opencv compatible)
 			m_convert_featureList_to_keypointList( img_data.pyr_feats[octave], feats_vector );
 
@@ -794,10 +569,23 @@ void CStereoOdometryEstimator::stage2_detect_features(
 			{
 				const size_t imgH = input_im.rows;
 				const size_t imgW = input_im.cols;
-				this->m_non_max_sup( kps_to_detect[octave]/*params_detect.orb_nfeats*/, feats_vector, desc_aux, img_data.pyr_feats_kps[octave], img_data.pyr_feats_desc[octave], imgH, imgW );
+				m_non_max_sup( 
+					kps_to_detect[octave], // params_detect.orb_nfeats
+					feats_vector, 
+					desc_aux, 
+					img_data.pyr_feats_kps[octave], 
+					img_data.pyr_feats_desc[octave], 
+					imgH, imgW );
 			}
 			else if( params_detect.nmsMethod == TDetectParams::nmsmAdaptive )
-				this->m_adaptive_non_max_sup( kps_to_detect[octave]/*params_detect.orb_nfeats*/, feats_vector, desc_aux, img_data.pyr_feats_kps[octave], img_data.pyr_feats_desc[octave] );
+			{
+				m_adaptive_non_max_sup( 
+					kps_to_detect[octave], // params_detect.orb_nfeats*/
+					feats_vector, 
+					desc_aux, 
+					img_data.pyr_feats_kps[octave], 
+					img_data.pyr_feats_desc[octave] );
+			}
 			else
 				THROW_EXCEPTION("	[sVO -- Stg2: Detect] Invalid non-maximal-suppression method." );
 		} // end-if-non-max-sup
@@ -814,109 +602,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 		m_next_gui_info->stats_feats_per_octave[octave] = 
 			nFeatsPassingKLTPerOctave[octave] = img_data.pyr_feats_kps[octave].size();
 
-		// TO DO: DELETE THIS, POSSIBLY UNNECESSARY
-		// ***********************************
-		// Fill keypoints ids
-		// ***********************************
-		//for( size_t idx = 0; idx < num_feats_this_octave; ++idx )
-		//	img_data.pyr_feats_kps[octave][idx].class_id = m_lastID++;
-
 	 } // end-for-octaves
-
-#if 0
-	// ***********************************
-	// FASTER method (no descriptor)
-	// ***********************************
-	else if( params_detect.detect_method == TDetectParams::dmFASTER )
-	{
-        // Use a dynamic threshold to maintain a target number of features per square pixel.
-        if (m_threshold.size()!=nOctaves) m_threshold.assign(nOctaves, params_detect.initial_FAST_threshold);
-
-        m_next_gui_info->stats_feats_per_octave.resize(nOctaves); // Reserve size for stats
-        m_next_gui_info->stats_FAST_thresholds_per_octave.resize(nOctaves);
-
-        // Evaluate the KLT response of all features to discard those in texture-less zones:
-        const unsigned int KLT_win	= params_detect.KLT_win;
-        const double minimum_KLT_response	= params_detect.minimum_KLT_response;
-
-        for (size_t octave=0;octave<nOctaves;octave++)
-        {
-            const std::string sProfileName = mrpt::format("stg2.detect.oct=%u",static_cast<unsigned int>(octave));
-            m_profiler.enter(sProfileName.c_str());
-
-            CFeatureExtraction::detectFeatures_SSE2_FASTER12(
-                img_data.pyr.images[octave],
-                img_data.pyr_feats[octave],
-                m_threshold[octave],
-                false /* don't append to list, overwrite it */,
-                octave,
-                &img_data.pyr_feats_index[octave] /* row-indexed list of features */
-                );
-
-            const size_t nFeats = img_data.pyr_feats[octave].size();
-
-            // fill in the identifiers of the features
-            for( size_t id = 0; id < nFeats; ++id )
-                img_data.pyr_feats[octave][id].ID = this->m_lastID++;
-
-            if (update_dyn_thresholds)
-            {
-                // Compute feature density & adjust dynamic threshold:
-                const size_t nFeats= img_data.pyr_feats[octave].size();
-                const mrpt::utils::TImageSize img_size = img_data.pyr.images[octave].getSize();
-                const double feats_density = nFeats / static_cast<double>( img_size.x * img_size.y);
-
-                if (feats_density<0.8*params_detect.target_feats_per_pixel)
-                    m_threshold[octave] = std::max(1, m_threshold[octave]-1);
-                else if (feats_density>1.2*params_detect.target_feats_per_pixel)
-                    m_threshold[octave] = m_threshold[octave]+1;
-
-                // Save stats for the GUI:
-                m_next_gui_info->stats_feats_per_octave[octave] = nFeats;
-                m_next_gui_info->stats_FAST_thresholds_per_octave[octave] = m_threshold[octave];
-            }
-
-            // compute the KLT response
-            const std::string subSectionName = mrpt::format("stg2.detect.klt.oct=%u",static_cast<unsigned int>(octave));
-            m_profiler.enter(subSectionName.c_str());
-
-            const TImageSize img_size = img_data.pyr.images[octave].getSize();
-            const TImageSize img_size_min( KLT_win+1, KLT_win+1 );
-            const TImageSize img_size_max( img_size.x-KLT_win-1, img_size.y-KLT_win-1 );
-
-            size_t nPassed = 0; // Number of feats in this octave that pass the KLT threshold (for stats only)
-
-            for (size_t i=0;i<img_data.pyr_feats[octave].size();i++)
-            {
-                TSimpleFeature &f = img_data.pyr_feats[octave][i];
-                const TPixelCoord pt = f.pt;
-                if (pt.x>=img_size_min.x && pt.y>=img_size_min.y && pt.x<img_size_max.x && pt.y<img_size_max.y) {
-                     f.response = img_data.pyr.images[octave].KLT_response(pt.x,pt.y,KLT_win);
-                     if (f.response>=minimum_KLT_response) nPassed++;
-                }
-                else f.response = 0;
-            } // end-for
-
-            nFeatsPassingKLTPerOctave[octave] = nPassed;
-            m_profiler.leave(subSectionName.c_str());
-
-            // perform non-maximal suppression [5x5] window (if enabled)
-            if( params_detect.non_maximal_suppression )
-            {
-                // Non-maximal supression using KLT response
-                const string subSectionName2 = mrpt::format("stg2.detect.non-max.oct=%u",static_cast<unsigned int>(octave));
-                m_profiler.enter(subSectionName2.c_str());
-                m_non_max_sup( img_data, octave );
-                m_profiler.leave(subSectionName2.c_str());
-            } // end non-maximal suppression
-
-			// convert to TKeyPointList (opencv compatible)
-			m_trans_featlist_to_kpslist(img_data);
-
-            m_profiler.leave(sProfileName.c_str()); // end detect
-        }
-	}
-#endif
 
 	if( params_gui.show_gui && params_gui.draw_all_raw_feats )
 	{

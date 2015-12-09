@@ -24,13 +24,20 @@
 
 using namespace rso;
 
-// computes the jacobian of a set of variables
+// -------------------------------------------------
+//	m_pinhole_stereo_projection (private) : transforms 3D points in a reference system to image coordinates in a different one (changed by delta_pose)
+// [i]		lmks			<- the input 3D landmarks
+// [i]		cam				<- stereo camera parameters
+// [i]		delta_pose		<- the tested movement of the camera (w1,w2,w3,t1,t2,t3)
+// [o]		out_pixels		<- the pixels of the landmarks in the (left & right) images
+// [o]		out_jacobian	<- the jacobians of the projections vector<matrix4x6>
+// -------------------------------------------------
 void CStereoOdometryEstimator::m_pinhole_stereo_projection(
-                const vector<TPoint3D> &lmks,                           // [input]  the input 3D landmarks
-                const TStereoCamera &cam,                               // [input]  the stereo camera
-                const vector<double> &delta_pose,                       // [input]  the tested movement of the camera (w1,w2,w3,t1,t2,t3)
-                vector< pair<TPixelCoordf,TPixelCoordf> > &out_pixels,  // [output] the pixels of the landmarks in the (left & right) images
-                vector<Eigen::MatrixXd> &out_jacobian                   // [output] the jacobians of the projections vector<matrix4x6>
+                const vector<TPoint3D>						& lmks,        // [input]  the input 3D landmarks
+                const TStereoCamera							& cam,         // [input]  the stereo camera
+                const vector<double>						& delta_pose,  // [input]  the tested movement of the camera (w1,w2,w3,t1,t2,t3)
+                vector< pair<TPixelCoordf,TPixelCoordf> >	& out_pixels,  // [output] the pixels of the landmarks in the (left & right) images
+                vector<Eigen::MatrixXd>						& out_jacobian // [output] the jacobians of the projections vector<matrix4x6>
                 )
 {
     const size_t nL = lmks.size();
@@ -249,6 +256,22 @@ void CStereoOdometryEstimator::m_pinhole_stereo_projection(
     } // end-for m
 } // end
 
+// -------------------------------------------------
+//	m_evalRGN (private) : performs one iteration of a Gauss-Newton optimization process
+// [i]		list1_l			<- left image coords at time 't'
+// [i]		list1_r			<- right image coords at time 't'
+// [i]		list2_l			<- left image coords at time 't+1'
+// [i]		list2_r			<- right image coords at time 't+1'
+// [i]		mask			<- vector with same size as input: true --> use point, false --> not use it
+// [i]		lmks			<- projected 'list1_x' points in 3D (computed outside just once)
+// [i]		deltaPose		<- initial incremental change in pose (w1,w2,w3,t1,t2,t3)
+// [i]		stereoCam		<- stereo camera parameters
+// [o]		out_newPose		<- current output change in pose
+// [o]		out_gradient	<- output computed gradient
+// [o]		out_residual	<- output computed residual
+// [o]		out_cost		<- output cost
+// [o]		out_error_code	<- output error code
+// -------------------------------------------------
 bool CStereoOdometryEstimator::m_evalRGN(
 	const TKeyPointList					& list1_l,			// input -- left image coords at time 't'
 	const TKeyPointList					& list1_r,			// input -- right image coords at time 't'
@@ -265,7 +288,6 @@ bool CStereoOdometryEstimator::m_evalRGN(
 	VOErrorCode							& out_error_code )
 {
 	const size_t nL = list1_l.size();						// number of points to project
-	// const size_t n_non_masked = std::count( mask.begin(), mask.end(), true );
 	const size_t n_non_masked = lmks.size();
 
 	ASSERTMSG_(n_non_masked>0,"Number of non masked points entering evaluation of Gauss Newton is zero!")
@@ -291,6 +313,8 @@ bool CStereoOdometryEstimator::m_evalRGN(
     m_pinhole_stereo_projection( lmks, stereoCam, deltaPose, out_pixels, out_jacobian );
 
 	// 3. Build Gauss-Newton equation system 
+	const double b2		= params_least_squares.use_robust_kernel ? params_least_squares.kernel_param*params_least_squares.kernel_param : 0;
+	const double b2_1	= params_least_squares.use_robust_kernel ? 1./b2 : 0;
 	for( size_t m = 0, i = 0; m < nL; ++m)
     {
 		if( !mask[m] ) continue;
@@ -323,13 +347,12 @@ bool CStereoOdometryEstimator::m_evalRGN(
 		// use robust kernel
 		// fi = b^2*(sqrt(1+r^2/b^2)-1)
         double rho_p    = 1;    // derivative of the robust kernel function
-        double fi       = 0;    // individual cost
+        double fi;				// individual cost
         if( params_least_squares.use_robust_kernel )
         {
-            const double b2     = params_least_squares.kernel_param*params_least_squares.kernel_param;
-            const double n      = sqrt(1+(s/b2));
-            rho_p				= 1/n;         // rho derivative
-            fi					= b2*(n-1);    // individual cost
+            const double n      = sqrt(1+(s*b2_1));
+            rho_p				= 1/n;				// rho derivative
+            fi					= b2*(n-1);			// individual cost
         }
         else
         {
@@ -365,246 +388,6 @@ bool CStereoOdometryEstimator::m_evalRGN(
 	out_newPose = svd.solve(out_gradient); // solve the system H*dx = g
     return true;
 } // end--m_evalRGN
-
-// evaluate one step of a robust gauss-newton minimization
-bool CStereoOdometryEstimator::m_evalRGN(
-    const CStereoOdometryEstimator::TTrackingData	& tracked_feats,	// input
-    const mrpt::utils::TStereoCamera				& cam,              // input
-    const vector<double>							& deltaPose,        // input (w1,w2,w3,t1,t2,t3)
-	const int										& cnt,				// input iteration counter
-	const vector<TPoint3D>							& lmks,
-    Eigen::MatrixXd									& out_newPose,
-    Eigen::MatrixXd									& out_gradient,
-    vector<double>									& out_residual,
-    double											& out_cost,
-	VOErrorCode										& out_error_code )
-{
-    const size_t octave = 0;	// (by now, just octave 0)
-
-    // get the features in prev images
-    // local variables
-    const size_t nL = tracked_feats.tracked_pairs[octave].size();    // number of matches between (left-right)_p and (left-right)_c seen from this position
-
-	// prepare output
-    out_residual.resize(nL);										// one residual value for each landmark
-    out_cost		= 0;											// the cost for this iteration
-	out_gradient	= Eigen::MatrixXd::Zero(6,1);
-	out_error_code	= voecNone;
-
-    // prepare variables
-    // get the prediction of the observation (uL',vL',uR',vR')
-    Eigen::MatrixXd zPre( 4, nL );
-
-    // gradient, jacobian and hessian (both individual and total)
-    Eigen::MatrixXd gi(6,1);
-    Eigen::MatrixXd Ji(4,6);
-    Eigen::MatrixXd Hi(6,6);
-    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(6,6);
-
-    // residuals r(k) = zObs(x) - zPred(x)
-    Eigen::MatrixXd r_left  = Eigen::MatrixXd::Zero(nL,2);
-    Eigen::MatrixXd r_right = Eigen::MatrixXd::Zero(nL,2);
-    Eigen::MatrixXd r = Eigen::MatrixXd::Zero(4*nL,1);				// the vector of residuals
-
-    /** / DEBUG
-    for( size_t m = 0; m < nL; ++m)
-    {
-        const size_t mpreIdx = tracked_feats.tracked_pairs[octave][m].first;
-
-        // left and right feature indexes
-        const size_t lpreIdx = tracked_feats.prev_imgpair->lr_pairing_data[octave].matches_lr[mpreIdx].first;
-        const size_t rpreIdx = tracked_feats.prev_imgpair->lr_pairing_data[octave].matches_lr[mpreIdx].second;
-
-        const TSimpleFeature &featpreL = tracked_feats.prev_imgpair->left.pyr_feats[octave][lpreIdx];
-        const TSimpleFeature &featpreR = tracked_feats.prev_imgpair->right.pyr_feats[octave][rpreIdx];
-
-        cout << "FEAT PAIR 1 [" << mpreIdx << "]: " << featpreL.pt << " and " << featpreR.pt << endl;
-
-        // left and right feature indexes
-        const size_t mcurIdx = tracked_feats.tracked_pairs[octave][m].second;
-
-        const size_t lcurIdx = tracked_feats.cur_imgpair->lr_pairing_data[octave].matches_lr[mcurIdx].first;
-        const size_t rcurIdx = tracked_feats.cur_imgpair->lr_pairing_data[octave].matches_lr[mcurIdx].second;
-
-        // observations: featL & featR
-        const TSimpleFeature &featL = tracked_feats.cur_imgpair->left.pyr_feats[octave][lcurIdx];
-        const TSimpleFeature &featR = tracked_feats.cur_imgpair->right.pyr_feats[octave][rcurIdx];
-
-        cout << "FEAT PAIR 2 [" << mcurIdx << "]: " << featL.pt << " and " << featR.pt << endl;
-        mrpt::system::pause();
-
-    } // end for
-    /**/
-    
-	// to do: filter by Z
-
-    vector< pair<TPixelCoordf,TPixelCoordf> > out_pixels;
-    vector<Eigen::MatrixXd> out_jacobian;
-    // landmark projections on the image
-    m_pinhole_stereo_projection( lmks, cam, deltaPose, out_pixels, out_jacobian );
-
-	FILE *fpred  = NULL;
-	if( params_general.vo_save_files )
-		fpred = mrpt::system::os::fopen(mrpt::format("%s/predictions_%04d_it%d.txt",params_general.vo_out_dir.c_str(),m_it_counter,cnt).c_str(),"wt");
-
-    for( size_t m = 0; m < nL; ++m)
-    {
-		if( !m_jacobian_is_good(out_jacobian[m]) )
-			continue;
-
-		// indexes of the matches in the current step
-        const size_t mcurIdx = tracked_feats.tracked_pairs[octave][m].second;
-        TSimpleFeature featL,featR;
-
-        if( params_detect.detect_method == TDetectParams::dmORB || params_detect.detect_method == TDetectParams::dmFAST_ORB )
-        {
-            // left and right feature indexes
-            const size_t lcurIdx = tracked_feats.cur_imgpair->orb_matches[mcurIdx].queryIdx;
-            const size_t rcurIdx = tracked_feats.cur_imgpair->orb_matches[mcurIdx].trainIdx;
-
-            featL.pt.x = tracked_feats.cur_imgpair->left.orb_feats[lcurIdx].pt.x;
-            featL.pt.y = tracked_feats.cur_imgpair->left.orb_feats[lcurIdx].pt.y;
-            featR.pt.x = tracked_feats.cur_imgpair->right.orb_feats[rcurIdx].pt.x;
-            featR.pt.y = tracked_feats.cur_imgpair->right.orb_feats[rcurIdx].pt.y;
-        }
-        else
-        {
-            // left and right feature indexes
-            const size_t lcurIdx = tracked_feats.cur_imgpair->lr_pairing_data[octave].matches_lr[mcurIdx].first;
-            const size_t rcurIdx = tracked_feats.cur_imgpair->lr_pairing_data[octave].matches_lr[mcurIdx].second;
-
-            featL = tracked_feats.cur_imgpair->left.pyr_feats[octave][lcurIdx];
-            featR = tracked_feats.cur_imgpair->right.pyr_feats[octave][rcurIdx];
-        }
-
-        // landmark projections on the image
-        TPixelCoordf & p2D_l = out_pixels[m].first;
-        TPixelCoordf & p2D_r = out_pixels[m].second;
-
-        // get the jacobian of the 3D->2D projection
-        Ji = out_jacobian[m];
-
-        // residual
-        const double r_left_x  = featL.pt.x-p2D_l.x;  // observation - prediction (left)
-        const double r_left_y  = featL.pt.y-p2D_l.y;  // observation - prediction (left)
-        const double r_right_x = featR.pt.x-p2D_r.x;  // observation - prediction (left)
-        const double r_right_y = featR.pt.y-p2D_r.y;  // observation - prediction (left)
-
-		if( params_general.vo_save_files )
-		{
-			mrpt::system::os::fprintf(fpred, "%d %d %d %d %.2f %.2f %.2f %.2f\n", 
-				featL.pt.x, featL.pt.y, featR.pt.x, featR.pt.y,
-				p2D_l.x, p2D_l.y, p2D_r.x, p2D_r.y );
-		}
-
-        // the residual vector
-        Eigen::Vector4d ri; ri << r_left_x, r_left_y, r_right_x, r_right_y;
-
-        // input value for the robust kernel function
-        const double s = r_left_x*r_left_x + r_left_y*r_left_y + r_right_x*r_right_x + r_right_y*r_right_y;
-        out_residual[m] = s;
-
-		// use robust kernel
-		// fi = b^2*(sqrt(1+r^2/b^2)-1)
-        double rho_p    = 1;    // derivative of the robust kernel function
-        double fi       = 0;    // individual cost
-		if( m_it_counter == 9 )
-			params_least_squares.use_robust_kernel = false;
-		else
-			params_least_squares.use_robust_kernel = true;
-        if( params_least_squares.use_robust_kernel )
-        {
-            const double b2     = params_least_squares.kernel_param*params_least_squares.kernel_param;
-            const double n      = sqrt(1+(s/b2));
-            rho_p   = 1/n;         // rho derivative
-            fi      = b2*(n-1);    // individual cost
-
-            // rho_pp  = -1/(2*b^2*n^3);   % rho second derivative
-            // pHi     = rho_p.*Wi+2*rho_pp.*(Wi*ri)*(Wi*ri)';
-            // pHi     = eye(4);
-        }
-        else
-        {
-            fi = 0.5*s;         // individual cost
-
-            // rho_pp  = 0;
-            // pHi     = eye(4);
-        }
-        out_cost += fi;
-
-        // compute the individual gradient and hessian
-        gi = rho_p*(Ji.transpose()*ri);     // Wi  = eye(4); gi  = rho_p.*(Ji'*Wi*ri);
-        Hi  = Ji.transpose()*Ji;            // Hi  = Ji'*pHi*Ji;
-
-        // add it to the total gradient and hessian
-        out_gradient += gi;
-        H += Hi;
-
-    } // end-for
-
-	if( params_general.vo_save_files )
-		mrpt::system::os::fclose(fpred);
-
-    // build the gauss newton equations
-    Eigen::JacobiSVD<Eigen::MatrixXd> svd(H,Eigen::ComputeThinU|Eigen::ComputeThinV);
-    Eigen::VectorXd eValues(6);
-    eValues = svd.singularValues();				// eigen values
-
-    double condNumber = eValues(0)/eValues(5);  // H condition number
-	if( mrpt::math::isNaN(condNumber) )
-	{
-		cout << "ERROR: Condition number is NaN" << endl;
-		cout << "Hessian = [" << endl << H << "]" << endl;
-		m_error = out_error_code = voecBadCondNumber;
-        return false;
-	} // end-if
-
-	/*
-	if( false && (condNumber < 1e-15 || mrpt::math::isNaN(condNumber) || !mrpt::math::isFinite(condNumber)) )
-    {
-        out_newPose = Eigen::MatrixXd::Zero(6,1);
-
-		// save debug info: previous and current matches positions in images
-		if( params_general.vo_debug )
-		{
-			FILE * fdebug = mrpt::system::os::fopen( mrpt::format("%s/debug_minimization_%d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(), "wt");
-			for( size_t i = 0; i < nL; ++i )
-			{
-				const size_t mpreIdx = tracked_feats.tracked_pairs[octave][i].first;
-				const size_t lpreIdx = tracked_feats.prev_imgpair->orb_matches[mpreIdx].queryIdx;
-				const size_t rpreIdx = tracked_feats.prev_imgpair->orb_matches[mpreIdx].trainIdx;
-				const cv::KeyPoint & pl_kp = tracked_feats.prev_imgpair->left.orb_feats[lpreIdx];
-				const cv::KeyPoint & pr_kp = tracked_feats.prev_imgpair->right.orb_feats[rpreIdx];
-
-				const size_t mcurIdx = tracked_feats.tracked_pairs[octave][i].second;
-				const size_t lcurIdx = tracked_feats.cur_imgpair->orb_matches[mcurIdx].queryIdx;
-				const size_t rcurIdx = tracked_feats.cur_imgpair->orb_matches[mcurIdx].trainIdx;
-				const cv::KeyPoint & cl_kp = tracked_feats.cur_imgpair->left.orb_feats[lcurIdx];
-				const cv::KeyPoint & cr_kp = tracked_feats.cur_imgpair->right.orb_feats[rcurIdx];
-
-				mrpt::system::os::fprintf(fdebug, "%.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f\n",
-					pl_kp.pt.x, pl_kp.pt.y, pr_kp.pt.x, pr_kp.pt.y,
-					cl_kp.pt.x, cl_kp.pt.y, cr_kp.pt.x, cr_kp.pt.y );
-			}
-			mrpt::system::os::fclose(fdebug);
-
-			// save images
-			m_prev_imgpair->left.pyr.images[0].saveToFile(     mrpt::format( "%s/impL_%d.jpg", params_general.vo_out_dir.c_str(), m_it_counter).c_str() );
-			m_prev_imgpair->right.pyr.images[0].saveToFile(    mrpt::format( "%s/impR_%d.jpg", params_general.vo_out_dir.c_str(), m_it_counter).c_str() );
-			m_current_imgpair->left.pyr.images[0].saveToFile(  mrpt::format( "%s/imcL_%d.jpg", params_general.vo_out_dir.c_str(), m_it_counter).c_str() );
-			m_current_imgpair->right.pyr.images[0].saveToFile( mrpt::format( "%s/imcR_%d.jpg", params_general.vo_out_dir.c_str(), m_it_counter).c_str() );
-		}
-
-		out_error_code = voecBadCondNumber;
-        return false;
-
-    }
-    else
-    {*/
-        out_newPose = svd.solve(out_gradient); // solve the system H*dx = g
-        return true;
-    //}
-}
 
 void CStereoOdometryEstimator::stage5_optimize(
 	CStereoOdometryEstimator::TTrackingData			& out_tracked_feats,
@@ -679,11 +462,15 @@ void CStereoOdometryEstimator::stage5_optimize(
 
 	// -- non-max-suppression (only previous left image, the rest will be discarded according to this survivors)
 	// -------------------------------------------
+	const size_t img_h = out_tracked_feats.prev_imgpair->left.pyr.images.size() > 0 ? 
+		out_tracked_feats.prev_imgpair->left.pyr.images[0].getHeight() : out_tracked_feats.prev_imgpair->img_h;
+	const size_t img_w = out_tracked_feats.prev_imgpair->left.pyr.images.size() > 0 ? 
+		out_tracked_feats.prev_imgpair->left.pyr.images[0].getWidth() : out_tracked_feats.prev_imgpair->img_w;
 	vector<bool> survivors(num_total_matches);
 	m_non_max_sup(	list1_l, 
 					survivors,	// this will update 'survivors' vector
-					out_tracked_feats.prev_imgpair->left.pyr.images[0].getHeight(), 
-					out_tracked_feats.prev_imgpair->left.pyr.images[0].getWidth(), 
+					img_h, 
+					img_w, 
 					num_total_matches ); 
 
 	// -- save files if desired
@@ -731,6 +518,13 @@ void CStereoOdometryEstimator::stage5_optimize(
 	
 	// 1. Project to 3D (only once for all iterations)
 	size_t n_non_masked = std::count( survivors.begin(), survivors.end(), true );
+	if( n_non_masked < 8 )
+	{
+		result.out_residual.swap( out_residual );
+        result.valid = false;
+		return;
+	}
+
 	const size_t nL = list1_l.size();
     vector<TPoint3D> lmks(n_non_masked);
     for( size_t m = 0, i = 0; m < nL; ++m)
@@ -785,29 +579,6 @@ void CStereoOdometryEstimator::stage5_optimize(
         // check ending condition
         if( result.num_it  > 0 )
         {
-			/** /
-            const double K   = 2*(pCost-cCost);
-            Eigen::MatrixXd _aux = out_newPose.transpose()*out_grad;
-            double aux = _aux(0,0);
-            const double med = K/aux;
-            if(med >= 0)
-            {
-                double m = 0;
-                for(uint8_t c = 0; c < 6; ++c)
-                    m += (out_newPose(c)*out_newPose(c));
-
-                done = sqrt(m) < params_least_squares.max_error_per_obs_px;
-
-//                cout << "SQRT: " << sqrt(m) << endl;
-            }
-            else
-            {
-                ++timesInc;
-//                cout << "Function cost is not decreasing (" << timesInc << " vs " << params_least_squares.max_incr_cost << "). Aborting...";
-                if( timesInc > params_least_squares.max_incr_cost )
-                    abort = true;
-            }
-			/**/
 			double m = 0;
 			for(uint8_t c = 0; c < 6; ++c)	m += (out_newPose(c)*out_newPose(c));
 
@@ -839,39 +610,17 @@ void CStereoOdometryEstimator::stage5_optimize(
 		}
 	} // end-for
 
-#if 0
-    CStereoOdometryEstimator::TTrackingData inliers;
-    inliers.cur_imgpair     = out_tracked_feats.cur_imgpair;
-    inliers.prev_imgpair    = out_tracked_feats.prev_imgpair;
-    inliers.tracked_pairs.resize(1);    // one only octave!
-    inliers.tracked_pairs[0].reserve(out_residual.size());
-	result.outliers.reserve(out_residual.size());
-
-    vector<TPoint3D> lmks2;
-	lmks2.reserve(lmks.size());
-
-	for( size_t obs = 0; obs < out_residual.size(); ++obs )
-    {
-        if( out_residual[obs] < params_least_squares.residual_threshold )
-		{
-			lmks2.push_back( lmks[obs] );
-            inliers.tracked_pairs[0].push_back( out_tracked_feats.tracked_pairs[0][obs] );
-		}
-        else
-		{
-			const size_t idx = out_tracked_feats.tracked_pairs[0][obs].second;
-			const size_t id  = params_general.vo_use_matches_ids ? 
-				m_current_imgpair->lr_pairing_data[0].matches_IDs[ out_tracked_feats.tracked_pairs[0][obs].second /*current*/ ] : // m_current_imgpair->orb_matches_ID[ out_tracked_feats.tracked_pairs[0][obs].second /*current*/ ] : 
-				0;
-				result.outliers.push_back( make_pair(idx,id) );
-		}
-    }
-    VERBOSE_LEVEL(2) << "	Inliers: " << inliers.tracked_pairs[0].size() << endl;
-#endif
     // update 3D landmarks (remove outliers)
     // ----------------------------------------------------
 	n_non_masked = std::count( survivors.begin(), survivors.end(), true );
-    lmks.resize(n_non_masked);
+	if( n_non_masked < 8 )
+	{
+		result.out_residual.swap( out_residual );
+        result.valid = false;
+		return;
+	}
+
+	lmks.resize(n_non_masked);
     for( size_t m = 0, i = 0; m < nL; ++m)
     {
 		if( !survivors[m] ) continue;
@@ -898,7 +647,6 @@ void CStereoOdometryEstimator::stage5_optimize(
 	// deltaPose = initial_estimation;
 
 	result.num_it_final = 0;
-	vector<double> out_residual_final;
     while( result.num_it_final < int(params_least_squares.max_iters) && !done && !abort )
     {
         pCost = cCost;
@@ -933,36 +681,6 @@ void CStereoOdometryEstimator::stage5_optimize(
         // check ending condition
         if( result.num_it_final > 0 )
         {
-			/** /
-            const double K   = 2*(pCost-cCost);
-            Eigen::MatrixXd _aux = out_newPose.transpose()*out_grad;
-            double aux = _aux(0,0);
-            const double med = K/aux;
-            if( med >= 0 )
-            {
-                double m = 0;
-                for(uint8_t c = 0; c < 6; ++c)
-                    m += (out_newPose(c)*out_newPose(c));
-
-                done = sqrt(m) < params_least_squares.max_error_per_obs_px;
-
-                // cout << "SQRT [ref]: " << sqrt(m) << endl;
-            }
-            else
-            {
-                if( pCost < cCost )
-				{
-					cout << "Function cost is not decreasing: ";
-					cout << pCost << " vs " << cCost << endl; // " outpose: " << endl << out_newPose.transpose() << " and outGrad: " << endl << out_grad.transpose() << endl;
-					if( ++timesInc > params_least_squares.max_incr_cost )
-					{
-						SHOW_WARNING("Function cost has increased too many times!");
-						abort = true;
-					}
-				}
-            }
-			/**/
-
 			double m = 0;
 			for(uint8_t c = 0; c < 6; ++c)	m += (out_newPose(c)*out_newPose(c));
 
@@ -970,7 +688,6 @@ void CStereoOdometryEstimator::stage5_optimize(
 
 			if( pCost < cCost )
 			{
-				// cout << "Function cost is not decreasing: " << pCost << " vs " << cCost << endl;
 				if( ++timesInc > params_least_squares.max_incr_cost )
 				{
 					SHOW_WARNING("Function cost has increased too many times!");
@@ -990,8 +707,8 @@ void CStereoOdometryEstimator::stage5_optimize(
 			mrpt::system::os::fprintf(fresidual,"%.3f\n", out_residual[k]);
 		mrpt::system::os::fclose(fresidual);
 		fresidual = os::fopen(mrpt::format("%s/out_residual_final_%04d.txt",params_general.vo_out_dir.c_str(),m_it_counter).c_str(),"wt");
-		for( size_t k = 0; k < out_residual_final.size(); ++k )
-			mrpt::system::os::fprintf(fresidual,"%.3f\n", out_residual_final[k]);
+		for( size_t k = 0; k < out_residual.size(); ++k )
+			mrpt::system::os::fprintf(fresidual,"%.3f\n", out_residual[k]);
 		mrpt::system::os::fclose(fresidual);
 	}
 
@@ -1005,6 +722,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 
     // set output result
     result.tracked_feats_from_last_frame	= m_num_tracked_pairs_from_last_frame;
+    result.tracked_feats_from_last_KF		= m_num_tracked_pairs_from_last_kf;
 	result.out_residual.swap( out_residual );
     result.valid = !abort;
 
