@@ -77,8 +77,8 @@ void CStereoOdometryEstimator::stage1_prepare_rectify(
 	// - Build pyramids
 	m_profiler.enter("stg1.pyramids");
 
-	// ORB computes the features in multi-scale itself so it does not need to build the pyramid
-	const size_t n_octaves = params_detect.detect_method == TDetectParams::dmFASTER ? params_rectify.nOctaves : 1;
+	// ORB computes the features in multi-scale itself so it does not need to build the pyramid (ORB: 1 scale, rest: 
+	const size_t n_octaves = params_detect.detect_method == TDetectParams::dmORB ? 1 : params_rectify.nOctaves;
 
 	out_imgpair.left.pyr.buildPyramidFast ( img_left_rect, n_octaves  );
 	out_imgpair.right.pyr.buildPyramidFast( img_right_rect, n_octaves );
