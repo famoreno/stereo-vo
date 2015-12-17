@@ -27,11 +27,12 @@
 
 // opencv
 #include <opencv2/opencv.hpp>
-#if 0
+#include <opencv2/core/version.hpp>
+#if CV_VERSION_EPOCH < 3  // OpenCV < 3.0.0
 	#include <opencv2/highgui/highgui.hpp>
 	#include <opencv2/imgproc/imgproc.hpp>
 	#include <opencv2/features2d/features2d.hpp>
-#else
+#else  // OpenCV >= 3.0.0
 	#include <opencv2/highgui.hpp>
 	#include <opencv2/imgproc.hpp>
 	#include <opencv2/features2d.hpp>

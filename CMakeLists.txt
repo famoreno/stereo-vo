@@ -13,7 +13,8 @@
 # ------------------------------------------------------------------------+
 PROJECT(stereo-vo)
 
-cmake_minimum_required(VERSION 2.4)
+cmake_minimum_required(VERSION 2.4.5)
+SET(CMAKE_ALLOW_LOOSE_LOOP_CONSTRUCTS 1)
 
 # Save libs and executables in the same place
 SET( LIBRARY_OUTPUT_PATH ${${PROJECT_NAME}_BINARY_DIR}/lib CACHE PATH "Output directory for libraries" )
@@ -29,29 +30,40 @@ INCLUDE_DIRECTORIES(${${PROJECT_NAME}_BINARY_DIR})
 
 IF (UNIX)
 	SET(DEFAULT_SHARED_LIBS ON)
-ELSE(UNIX)
+ELSE()
 	SET(DEFAULT_SHARED_LIBS OFF)
-ENDIF(UNIX)
+ENDIF()
 
 SET(BUILD_SHARED_LIBS ${DEFAULT_SHARED_LIBS} CACHE BOOL "Build shared libraries (.dll/.so) instead of static ones (.lib/.a)")
 
 
-# Minimum version required here: 0.9.6
-#  (for mrpt libs, see www.mrpt.org)
+# Minimum version required here: 1.0.0 (for mrpt libs, see www.mrpt.org)
 #SET(MRPT_DONT_USE_DBG_LIBS 1) # For CMake "Debug" builds in Linux
-FIND_PACKAGE(MRPT REQUIRED hwdrivers gui vision obs base opengl)
-FIND_PACKAGE(OpenCV REQUIRED)
+FIND_PACKAGE(MRPT 1.0.0 REQUIRED hwdrivers gui vision obs base opengl)
+FIND_PACKAGE(OpenCV REQUIRED core highgui)
 
-IF("${MRPT_VERSION}" VERSION_LESS "0.9.6")
-        MESSAGE(FATAL_ERROR "Needs MRPT version 0.9.6 or later!")
-ENDIF("${MRPT_VERSION}" VERSION_LESS "0.9.6")
+IF (OpenCV_FOUND)
+	MESSAGE(STATUS "OpenCV version found : ${OpenCV_VERSION}")
+	IF ($ENV{VERBOSE})
+		MESSAGE(STATUS "  OpenCV  include dirs : ${OpenCV_INCLUDE_DIRS}")
+	ENDIF()	
+ENDIF()
+
+IF (MRPT_FOUND)
+	MESSAGE(STATUS "MRPT version found   : ${MRPT_VERSION}")
+	IF ($ENV{VERBOSE})
+		MESSAGE(STATUS "MRPT include dirs  : ${MRPT_INCLUDE_DIRS}")
+	ENDIF()	
+ENDIF()
+
+
 
 # Set debug or optimized building:
 IF(CMAKE_COMPILER_IS_GNUCXX)
 	IF (CMAKE_BUILD_TYPE MATCHES "Debug")
 	        SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g")
 	ELSE (CMAKE_BUILD_TYPE MATCHES "Debug")
-	        SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -mtune=native -msse2 -msse3 -mssse3")
+	        SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -mtune=native") # Native should automatically select any of these: -msse2 -msse3 -mssse3
 	ENDIF (CMAKE_BUILD_TYPE MATCHES "Debug")
 ENDIF(CMAKE_COMPILER_IS_GNUCXX)
 
