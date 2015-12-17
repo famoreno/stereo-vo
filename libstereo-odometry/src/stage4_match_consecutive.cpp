@@ -354,8 +354,8 @@ void CStereoOdometryEstimator::stage4_track(
 			// left image 
 			{
 				// PREPARE INPUT
-				cv::Mat first_im = prev_imgpair.left.pyr.images[octave].getAs<IplImage>();
-				cv::Mat second_im = cur_imgpair.left.pyr.images[octave].getAs<IplImage>();
+				cv::Mat first_im = cv::cvarrToMat(prev_imgpair.left.pyr.images[octave].getAs<IplImage>());
+				cv::Mat second_im = cv::cvarrToMat(cur_imgpair.left.pyr.images[octave].getAs<IplImage>());
 		
 				for(int i = 0; i < num_pre_matches; ++i)
 					prevPts_left.push_back( prev_imgpair.left.pyr_feats_kps[octave][m[i].queryIdx].pt );
@@ -368,8 +368,8 @@ void CStereoOdometryEstimator::stage4_track(
 			// right image only
 			{
 				// PREPARE INPUT
-				cv::Mat first_im = prev_imgpair.right.pyr.images[octave].getAs<IplImage>();
-				cv::Mat second_im = cur_imgpair.right.pyr.images[octave].getAs<IplImage>();
+				cv::Mat first_im = cv::cvarrToMat(prev_imgpair.right.pyr.images[octave].getAs<IplImage>());
+				cv::Mat second_im = cv::cvarrToMat(cur_imgpair.right.pyr.images[octave].getAs<IplImage>());
 		
 				for(int i = 0; i < num_pre_matches; ++i)
 					prevPts_right.push_back( prev_imgpair.right.pyr_feats_kps[octave][m[i].queryIdx].pt );
@@ -394,7 +394,7 @@ void CStereoOdometryEstimator::stage4_track(
 			{
 				match_is_tracked[i] = 
 					match_is_tracked[i] && 
-					std::fabsf(nextPts_left[i].y-nextPts_right[i].y) <= 1.5; // epipolar tolerance
+					std::fabs(nextPts_left[i].y-nextPts_right[i].y) <= 1.5; // epipolar tolerance
 			}
 
 			// 'match_is_tracked' now contains if the match has been tracked or not

@@ -27,9 +27,15 @@
 
 // opencv
 #include <opencv2/opencv.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
-#include <opencv2/features2d/features2d.hpp>
+#if 0
+	#include <opencv2/highgui/highgui.hpp>
+	#include <opencv2/imgproc/imgproc.hpp>
+	#include <opencv2/features2d/features2d.hpp>
+#else
+	#include <opencv2/highgui.hpp>
+	#include <opencv2/imgproc.hpp>
+	#include <opencv2/features2d.hpp>
+#endif
 
 // mrpt
 #include <mrpt/utils/CImage.h>

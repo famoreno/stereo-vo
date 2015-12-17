@@ -250,15 +250,15 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
             {
 				// select current rows (with user-defined tolerance)
                 const size_t idx_feats_L0 = idxL[y]; const size_t idx_feats_L1 = idxL[y+1];
-				const size_t min_row_right = max(int(0),int(y)-round(params_lr_match.max_y_diff));
-				const size_t max_row_right = min(int(imgL.getHeight()-1),int(y)+round(params_lr_match.max_y_diff));
+				const size_t min_row_right = max(size_t(0),size_t(y)-size_t(round(params_lr_match.max_y_diff)));
+				const size_t max_row_right = min(size_t(imgL.getHeight()-1),size_t(y)+size_t(round(params_lr_match.max_y_diff)));
 				const size_t idx_feats_R0 = idxR[min_row_right]; const size_t idx_feats_R1 = idxR[max_row_right];
 
                 // The number of feats in the row "y" in each image:
                 const size_t nFeatsL = idx_feats_L1 - idx_feats_L0;
                 const size_t nFeatsR = idx_feats_R1 - idx_feats_R0;
 
-				if( !nFeatsL || !nFeatsR )
+				if( (nFeatsL==0) || (nFeatsR==0) )
                     continue; // No way we can match a damn thing here!
 
                 for( size_t idx_feats_L = idx_feats_L0; idx_feats_L < idx_feats_L1; idx_feats_L++ )

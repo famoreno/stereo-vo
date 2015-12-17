@@ -42,18 +42,18 @@ void m_convert_featureList_to_keypointList( const TSimpleFeatureList & featList,
 } // end--m_convert_featureList_to_keypointList
 
 CStereoOdometryEstimator::TDetectParams::TDetectParams() :
+	detect_method(dmFASTER),
 	target_feats_per_pixel (10./1000.),
-	initial_FAST_threshold(20/*6*/),
-	fast_min_th(5), fast_max_th(30),
-	non_maximal_suppression(true),
 	KLT_win(4),
 	minimum_KLT_response(10),
-	minimum_ORB_response(0.),
-	detect_method(dmFASTER),
+	non_maximal_suppression(true),
 	nmsMethod(nmsmStandard),
+	min_distance(3),
 	orb_nfeats(500),
 	orb_nlevels(8),
-	min_distance(3)
+	minimum_ORB_response(0.),
+	fast_min_th(5), fast_max_th(30),
+	initial_FAST_threshold(20/*6*/)
 {
 }
 
@@ -423,7 +423,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 	for( size_t octave = 0; octave < nOctaves; ++octave )
 	{
 		// - Image information
-        Mat input_im = img_data.pyr.images[octave].getAs<IplImage>();
+        Mat input_im = cv::cvarrToMat(img_data.pyr.images[octave].getAs<IplImage>());
 		const mrpt::utils::TImageSize img_size = img_data.pyr.images[octave].getSize();
 
 		// - Profile section name
@@ -465,7 +465,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 
 			m_profiler.enter(sProfileName.c_str());
 			
-			// detect ORB keypoints and descriptors
+#if 0
 			ORB orbDetector( 
 				n_feats_to_extract,			// number of ORB features to extract
 				1.2,						// scale difference
@@ -474,11 +474,24 @@ void CStereoOdometryEstimator::stage2_detect_features(
 				0,							// firstLevel
 				2,							// WTA_K
 				ORB::HARRIS_SCORE,			// scoreType
-				31,							// patchSize
-				m_current_fast_th );		// fast threshold
+                31);						// fast threshold
 
 			// detect keypoints and descriptors
 			orbDetector( input_im, Mat(), feats_vector, desc_aux );  // all the scales in the same call
+#else
+			Ptr<cv::ORB> orbDetector = cv::ORB::create(
+				n_feats_to_extract,			// number of ORB features to extract
+				1.2,						// scale difference
+				params_detect.orb_nlevels,  // number of levels
+				31,							// edgeThreshold
+				0,							// firstLevel
+				2,							// WTA_K
+				ORB::HARRIS_SCORE,			// scoreType
+                31,							// patchSize
+                m_current_fast_th );		// fast threshold
+
+			orbDetector->detectAndCompute( input_im, Mat(), feats_vector, desc_aux );	// all the scales in the same call
+#endif
 
 			m_profiler.enter(sProfileName.c_str());
 		}
@@ -489,11 +502,15 @@ void CStereoOdometryEstimator::stage2_detect_features(
 		else if( params_detect.detect_method == TDetectParams::dmFAST_ORB )
 		{
 			m_profiler.enter(sProfileName.c_str());
-			
+#if 0
 			cv::FastFeatureDetector(m_current_fast_th).detect( input_im, feats_vector );	// detect keypoints
 			MRPT_TODO("Perform non-maximal suppression here -- avoids computing ORB descriptors which are going to be rejected")
 			ORB().operator()(input_im, Mat(), feats_vector, desc_aux, true );				// extract descriptors
-
+#else
+			Ptr<cv::FastFeatureDetector> fastDetector = cv::FastFeatureDetector::create( m_current_fast_th );
+			fastDetector->detect( input_im, feats_vector );
+			cv::ORB::create()->compute( input_im, feats_vector, desc_aux );
+#endif
 			m_profiler.leave(sProfileName.c_str());
 		}
 		// ***********************************
@@ -598,7 +615,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 		}
 
 		// update indexes here
-		m_update_indexes( img_data, octave );
+		m_update_indexes( img_data, octave, true );
 
         // gui info
 		m_next_gui_info->stats_feats_per_octave[octave] = 
