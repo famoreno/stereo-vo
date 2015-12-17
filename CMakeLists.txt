@@ -6,7 +6,7 @@
 #  This is the main CMake script for the entire project.                  |
 #  See README.txt                                                         |
 #                                                                         |
-# Copyright (C) 2012 Jose-Luis Blanco-Claraco, Francisco-Angel Moreno     |
+# Copyright (C) 2012-2016 Francisco-Angel Moreno, Jose-Luis Blanco-Claraco|
 #                     and Javier Gonzalez-Jimenez                         |
 #                     (University of Malaga)                              |
 #                                                Released under GNU GPL 3 |
