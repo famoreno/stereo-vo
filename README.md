@@ -19,7 +19,7 @@ A C++ library for stereo visual odometry.
 
 * CMake
 * [MRPT](https://github.com/MRPT/mrpt) (>=1.3.0 ?)
-* OpenCV (>=2.4.0 ?)
+* OpenCV (>=2.4.8)
 
 They can be installed in Debian or Ubuntu with:
 
