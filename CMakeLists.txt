@@ -40,7 +40,7 @@ SET(BUILD_SHARED_LIBS ${DEFAULT_SHARED_LIBS} CACHE BOOL "Build shared libraries 
 # Minimum version required here: 1.0.0 (for mrpt libs, see www.mrpt.org)
 #SET(MRPT_DONT_USE_DBG_LIBS 1) # For CMake "Debug" builds in Linux
 FIND_PACKAGE(MRPT 1.0.0 REQUIRED hwdrivers gui vision obs base opengl)
-FIND_PACKAGE(OpenCV REQUIRED core highgui)
+FIND_PACKAGE(OpenCV REQUIRED core highgui features2d)
 
 IF (OpenCV_FOUND)
 	MESSAGE(STATUS "OpenCV version found : ${OpenCV_VERSION}")
@@ -57,19 +57,23 @@ IF (MRPT_FOUND)
 ENDIF()
 
 
-
-# Set debug or optimized building:
-IF(CMAKE_COMPILER_IS_GNUCXX)
+# Shared options between GCC and CLANG:
+# ======================================
+IF (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR CMAKE_COMPILER_IS_GNUCXX)
+	# Set debug or optimized building:
 	IF (CMAKE_BUILD_TYPE MATCHES "Debug")
 	        SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g")
-	ELSE (CMAKE_BUILD_TYPE MATCHES "Debug")
+	ELSE ()
 	        SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -mtune=native") # Native should automatically select any of these: -msse2 -msse3 -mssse3
-	ENDIF (CMAKE_BUILD_TYPE MATCHES "Debug")
-ENDIF(CMAKE_COMPILER_IS_GNUCXX)
+	ENDIF ()
 
-IF(CMAKE_COMPILER_IS_GNUCXX)
+	# We need pthreads
+	IF (UNIX AND NOT APPLE)
+		SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+	ENDIF(UNIX AND NOT APPLE)
+
 	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic")
-ENDIF(CMAKE_COMPILER_IS_GNUCXX)
+ENDIF()
 
 # Avoid silly warnings.
 IF(MSVC)

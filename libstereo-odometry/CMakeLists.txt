@@ -30,6 +30,7 @@ FILE(GLOB LIBHDRS "src/*.h")
 FILE(GLOB LIBSRCS "src/*.cpp")
 FILE(GLOB LIBHDRSPUB "include/*.h")
 ADD_LIBRARY(stereo-odometry ${LIBHDRS} ${LIBSRCS} ${LIBHDRSPUB})
+TARGET_LINK_LIBRARIES(stereo-odometry ${MRPT_LIBS} ${OpenCV_LIBS})
 
 
 # Unit tests:

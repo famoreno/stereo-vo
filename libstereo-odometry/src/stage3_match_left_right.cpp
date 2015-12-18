@@ -44,14 +44,15 @@ typedef struct TFeat2MatchInfo
 } TFeat2MatchInfo;
 
 CStereoOdometryEstimator::TLeftRightMatchParams::TLeftRightMatchParams() :
+	match_method(smSAD),
 	sad_max_distance(200),
-	enable_robust_1to1_match(false),
 	sad_max_ratio(0.5),
+	orb_max_distance(40),
+	orb_min_th(30), orb_max_th(100),
+	enable_robust_1to1_match(false),
 	rectified_images(false),
 	max_y_diff(0),
-	orb_max_distance(40),
-	min_z(0.3), max_z(5),
-	orb_min_th(30), orb_max_th(100)
+	min_z(0.3), max_z(5)
 {
 }
 
@@ -96,7 +97,7 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 			const TKeyPointList  & leftKps	= imgpair.left.pyr_feats_kps[octave];
 			const TKeyPointList  & rightKps = imgpair.right.pyr_feats_kps[octave];
 			vector<DMatch> & matches		= imgpair.lr_pairing_data[octave].matches_lr_dm;
-			Mat & leftMatches				= imgpair.left.pyr_feats_desc[octave];
+			//Mat & leftMatches				= imgpair.left.pyr_feats_desc[octave];
 			Mat & rightMatches				= imgpair.right.pyr_feats_desc[octave];
 
 			// DEBUG:
@@ -211,16 +212,16 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 			const TKeyPointList & feats_left	= imgpair.left.pyr_feats_kps[octave];
 			const TKeyPointList & feats_right	= imgpair.right.pyr_feats_kps[octave];
 
-            // References to the feature indices by row:
-            const vector_size_t & idxL = imgpair.left.pyr_feats_index[octave];
-            const vector_size_t & idxR = imgpair.right.pyr_feats_index[octave];
+			// References to the feature indices by row:
+			const vector_size_t & idxL = imgpair.left.pyr_feats_index[octave];
+			const vector_size_t & idxR = imgpair.right.pyr_feats_index[octave];
 
 			// Get references to the descriptors lists (for OBR only)
 			Mat desc_left			= imgpair.left.pyr_feats_desc[octave];
 			Mat desc_right			= imgpair.right.pyr_feats_desc[octave];
 
-            ASSERTDEB_(idxL.size()==idxR.size())
-            const size_t nRowsMax = idxL.size();
+			ASSERTDEB_(idxL.size()==idxR.size())
+			const size_t nRowsMax = idxL.size();
 		
 			// 121 robust stereo matching ------------------------
 			const uint32_t MAX_D = std::numeric_limits<uint32_t>::max();
@@ -246,33 +247,33 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 			const int max_disparity = static_cast<int>(imgL.getWidth()*0.7);
 
 			// Match features row by row:
-            for( size_t y = 0; y < nRowsMax-1; y++ )
-            {
+			for( size_t y = 0; y < nRowsMax-1; y++ )
+			{
 				// select current rows (with user-defined tolerance)
-                const size_t idx_feats_L0 = idxL[y]; const size_t idx_feats_L1 = idxL[y+1];
+				const size_t idx_feats_L0 = idxL[y]; const size_t idx_feats_L1 = idxL[y+1];
 				const size_t min_row_right = max(size_t(0),size_t(y)-size_t(round(params_lr_match.max_y_diff)));
 				const size_t max_row_right = min(size_t(imgL.getHeight()-1),size_t(y)+size_t(round(params_lr_match.max_y_diff)));
 				const size_t idx_feats_R0 = idxR[min_row_right]; const size_t idx_feats_R1 = idxR[max_row_right];
 
-                // The number of feats in the row "y" in each image:
-                const size_t nFeatsL = idx_feats_L1 - idx_feats_L0;
-                const size_t nFeatsR = idx_feats_R1 - idx_feats_R0;
+				// The number of feats in the row "y" in each image:
+				const size_t nFeatsL = idx_feats_L1 - idx_feats_L0;
+				const size_t nFeatsR = idx_feats_R1 - idx_feats_R0;
 
 				if( (nFeatsL==0) || (nFeatsR==0) )
-                    continue; // No way we can match a damn thing here!
+					continue; // No way we can match a damn thing here!
 
-                for( size_t idx_feats_L = idx_feats_L0; idx_feats_L < idx_feats_L1; idx_feats_L++ )
-                {
+				for( size_t idx_feats_L = idx_feats_L0; idx_feats_L < idx_feats_L1; idx_feats_L++ )
+				{
 					const KeyPoint & featL	= imgpair.left.pyr_feats_kps[octave][idx_feats_L];		// left keypoint
 
-                    // two lowest distances and lowest distance index
+					// two lowest distances and lowest distance index
 					uint32_t min_1, min_2;
-                    min_1 = min_2 = std::numeric_limits<uint32_t>::max();
-                    int min_idx = INVALID_IDX;
+					min_1 = min_2 = std::numeric_limits<uint32_t>::max();
+					int min_idx = INVALID_IDX;
 
 					for( size_t idx_feats_R = idx_feats_R0; idx_feats_R < idx_feats_R1; idx_feats_R++ )
-                    {
-                        const KeyPoint & featR	= imgpair.right.pyr_feats_kps[octave][idx_feats_R];	// right keypoint
+					{
+						const KeyPoint & featR	= imgpair.right.pyr_feats_kps[octave][idx_feats_R];	// right keypoint
 
 						// Reponse filter
 						if( featL.response < minimum_response || featR.response < minimum_response )
@@ -281,16 +282,16 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 						// Disparity filter
 						const int disparity = featL.pt.x-featR.pt.x;
 						if( disparity < 1 || disparity > max_disparity )
-                            continue;
+							continue;
 
 						// Too-close-to-border filter (only for SAD)
 						MRPT_TODO("Optimize too-close-border");
-						if( params_lr_match.match_method == TLeftRightMatchParams::smSAD &&
-							featL.pt.x < 3 || featR.pt.x < 3 ||
-                            featL.pt.y < 3 || featR.pt.y < 3 ||
-                            featL.pt.x > max_pt.x || featR.pt.x > max_pt.x ||
-                            featL.pt.y > max_pt.y || featR.pt.y > max_pt.y )
-
+						if( (params_lr_match.match_method == TLeftRightMatchParams::smSAD) &&
+							(featL.pt.x < 3 || featR.pt.x < 3 ||
+							featL.pt.y < 3 || featR.pt.y < 3 ||
+							featL.pt.x > max_pt.x || featR.pt.x > max_pt.x ||
+							featL.pt.y > max_pt.y || featR.pt.y > max_pt.y )
+							)
 							continue;
  
 						// We've got a potential match --> compute distance
@@ -333,24 +334,24 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 						if( dist > max_distance )
 							continue; // bad match
 							
-                        // keep the closest
+						// keep the closest
 						if( dist < min_1 )
-                        {
-                            min_2    = min_1;
-                            min_1    = dist;
-                            min_idx  = idx_feats_R;
-                        }
-                        else if( dist < min_2 )
-                            min_2 = dist;
+						{
+							min_2    = min_1;
+							min_1    = dist;
+							min_idx  = idx_feats_R;
+						}
+						else if( dist < min_2 )
+							min_2 = dist;
 
 						const double this_ratio = 1.0*min_1/min_2;
 						if( this_ratio > max_ratio )
 							continue;
 
 						// DEBUG:
-						mrpt::system::os::fprintf(f,"%d,%.2f,%.2f,%.2f,%.2f,%d\n",octave,featL.pt.x,featL.pt.y,featR.pt.x,featR.pt.y,dist);
+						mrpt::system::os::fprintf(f,"%d,%.2f,%.2f,%.2f,%.2f,%d\n",static_cast<int>(octave),featL.pt.x,featL.pt.y,featR.pt.x,featR.pt.y,static_cast<int>(dist));
 
-                    } // end for feats_R
+					} // end for feats_R
 
 					// We've got a potential match
 					if( min_idx != INVALID_IDX )
@@ -394,7 +395,7 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 			// Create output matches
 			const size_t out_size = left_matches_idxs.size();
 			imgpair.lr_pairing_data[octave].matches_lr_dm.reserve( out_size );
-			for( int i = 0; i < out_size; ++i )
+			for(size_t i = 0; i < out_size; ++i )
 			{
 				if( left_matches_idxs[i] != INVALID_IDX )
 				{

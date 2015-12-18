@@ -43,7 +43,7 @@ void CStereoOdometryEstimator::m_filter_by_fundmatrix(
 
 	aux_prevpts.reserve(num_matches);
 	aux_nextpts.reserve(num_matches);
-	for( int p = 0; p < num_matches; ++p )
+	for( size_t p = 0; p < num_matches; ++p )
 	{
 		if( status[p] ) 
 		{
@@ -56,7 +56,7 @@ void CStereoOdometryEstimator::m_filter_by_fundmatrix(
 	cv::findFundamentalMat(p1,p2,cv::FM_RANSAC,1.0,0.99,inliers);
 
 	// update status
-	for( int p = 0, i = 0; p < num_matches; ++p )
+	for( size_t p = 0, i = 0; p < num_matches; ++p )
 	{
 		if( status[p] ) status[p] = inliers[i++];
 	}
@@ -315,13 +315,13 @@ void CStereoOdometryEstimator::stage4_track(
 					const size_t & curRIdx = cur_imgpair.lr_pairing_data[octave].matches_lr_dm[out_tracked_feats.tracked_pairs[octave][k].second].trainIdx;
 
 					os::fprintf( f, "%d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %d %d\n",
-						octave, 
+						static_cast<int>(octave),
 						prev_imgpair.left.pyr_feats_kps[octave][preLIdx].pt.x, prev_imgpair.left.pyr_feats_kps[octave][preLIdx].pt.y, 
 						prev_imgpair.right.pyr_feats_kps[octave][preRIdx].pt.x, prev_imgpair.right.pyr_feats_kps[octave][preRIdx].pt.y,
 						cur_imgpair.left.pyr_feats_kps[octave][curLIdx].pt.x,  cur_imgpair.left.pyr_feats_kps[octave][curLIdx].pt.y,  
 						cur_imgpair.right.pyr_feats_kps[octave][curRIdx].pt.x,  cur_imgpair.right.pyr_feats_kps[octave][curRIdx].pt.y,
-						out_tracked_feats.tracked_pairs[octave][k].first, 
-						out_tracked_feats.tracked_pairs[octave][k].second
+						static_cast<int>(out_tracked_feats.tracked_pairs[octave][k].first),
+						static_cast<int>(out_tracked_feats.tracked_pairs[octave][k].second)
 						);
 				}
 			} // end-if
@@ -337,7 +337,7 @@ void CStereoOdometryEstimator::stage4_track(
 		cur_imgpair.right.pyr_feats_kps.resize(nOctaves);
 		
 		// -- compute optical flow
-		for( int octave = 0; octave < nOctaves; ++octave )
+		for( size_t octave = 0; octave < nOctaves; ++octave )
 		{
 			const vector<cv::DMatch> & m  = prev_imgpair.lr_pairing_data[octave].matches_lr_dm;
 			const size_t num_pre_matches = m.size();
@@ -357,7 +357,7 @@ void CStereoOdometryEstimator::stage4_track(
 				cv::Mat first_im = cv::cvarrToMat(prev_imgpair.left.pyr.images[octave].getAs<IplImage>());
 				cv::Mat second_im = cv::cvarrToMat(cur_imgpair.left.pyr.images[octave].getAs<IplImage>());
 		
-				for(int i = 0; i < num_pre_matches; ++i)
+				for(size_t i = 0; i < num_pre_matches; ++i)
 					prevPts_left.push_back( prev_imgpair.left.pyr_feats_kps[octave][m[i].queryIdx].pt );
 				
 				// COMPUTE OPTICAL FLOW
@@ -371,7 +371,7 @@ void CStereoOdometryEstimator::stage4_track(
 				cv::Mat first_im = cv::cvarrToMat(prev_imgpair.right.pyr.images[octave].getAs<IplImage>());
 				cv::Mat second_im = cv::cvarrToMat(cur_imgpair.right.pyr.images[octave].getAs<IplImage>());
 		
-				for(int i = 0; i < num_pre_matches; ++i)
+				for(size_t i = 0; i < num_pre_matches; ++i)
 					prevPts_right.push_back( prev_imgpair.right.pyr_feats_kps[octave][m[i].queryIdx].pt );
 				
 				// COMPUTE OPTICAL FLOW
@@ -385,12 +385,12 @@ void CStereoOdometryEstimator::stage4_track(
 			m_filter_by_fundmatrix( prevPts_right, nextPts_right, status_right /*will be updated*/ );
 
 			// updated tracking information
-			for( int i = 0; i < num_pre_matches; ++i )
+			for( size_t i = 0; i < num_pre_matches; ++i )
 				match_is_tracked[i] = (status_left[i] != 0) && (status_right[i] != 0);
 
 			// CONSISTENCY CHECK
 			MRPT_TODO("epipolar tolerance should be user-defined")
-			for( int i = 0; i < num_pre_matches; ++i )
+			for(size_t i = 0; i < num_pre_matches; ++i )
 			{
 				match_is_tracked[i] = 
 					match_is_tracked[i] && 
@@ -401,7 +401,7 @@ void CStereoOdometryEstimator::stage4_track(
 			const size_t num_tracked_matches = std::count(match_is_tracked.begin(),match_is_tracked.end(),true);
 			cur_imgpair.left.pyr_feats_kps[octave].resize(num_tracked_matches);
 			cur_imgpair.right.pyr_feats_kps[octave].resize(num_tracked_matches);
-			for( int i = 0, j = 0; i < num_pre_matches; ++i )
+			for(size_t i = 0, j = 0; i < num_pre_matches; ++i )
 			{
 				if( match_is_tracked[i] )
 				{
@@ -436,19 +436,19 @@ void CStereoOdometryEstimator::stage4_track(
 			 params_if_match.ifm_method == TInterFrameMatchingParams::ifmDescWin )
 	{
 		const bool use_SAD = params_if_match.ifm_method == TInterFrameMatchingParams::ifmSAD;
-		const bool use_ORB = params_if_match.ifm_method == TInterFrameMatchingParams::ifmDescWin;
+		//const bool use_ORB = params_if_match.ifm_method == TInterFrameMatchingParams::ifmDescWin;
 		
 		// Tracking window size in pixels (from [-W,+W])
 		const int WIN_W = params_if_match.ifm_win_w;
 		const int WIN_H = params_if_match.ifm_win_h;
 
 		const int PATCHSIZE_L = 3; // 8x8 patches are [-3,4] wrt the center point (only used for SAD)
-	    const int PATCHSIZE_R = 4;
+		const int PATCHSIZE_R = 4;
 
 		const uint32_t MAX_SAD = params_if_match.sad_max_distance;
-		const uint32_t MAX_ORB = params_if_match.orb_max_distance;
+		//const uint32_t MAX_ORB = params_if_match.orb_max_distance;
 
-		const uint32_t invalid_pairing_id = std::string::npos;
+		const size_t invalid_pairing_id = std::string::npos;
 
 		out_tracked_feats.prev_imgpair = & prev_imgpair;
 		out_tracked_feats.cur_imgpair  = & cur_imgpair;
@@ -460,8 +460,8 @@ void CStereoOdometryEstimator::stage4_track(
 			// references to the descriptors
 			const cv::Mat & desc_pre_left  = prev_imgpair.left.pyr_feats_desc[octave];
 			const cv::Mat & desc_cur_left  = cur_imgpair.left.pyr_feats_desc[octave];
-			const cv::Mat & desc_pre_right = prev_imgpair.right.pyr_feats_desc[octave];
-			const cv::Mat & desc_cur_right = cur_imgpair.right.pyr_feats_desc[octave];
+			//const cv::Mat & desc_pre_right = prev_imgpair.right.pyr_feats_desc[octave];
+			//const cv::Mat & desc_cur_right = cur_imgpair.right.pyr_feats_desc[octave];
 
 			// For each octave:
 			const TImagePairData::img_pairing_data_t & prev_pairs = prev_imgpair.lr_pairing_data[octave];
@@ -593,7 +593,7 @@ void CStereoOdometryEstimator::stage4_track(
 
 							// compute ORB distance
 							// ORB descriptor Hamming distance (left-left and right-right)
-							uint8_t orb_l = 0, orb_r = 0;
+							uint8_t orb_l = 0;//, orb_r = 0;
 							for( uint8_t k = 0; k < desc_pre_left.cols; ++k )
 							{
 								uint8_t x_or = desc_pre_left.at<uint8_t>(p_idx,k) ^ desc_cur_left.at<uint8_t>(c_idx,k);
@@ -670,10 +670,10 @@ void CStereoOdometryEstimator::stage4_track(
 					if( params_general.vo_save_files )
 					{
 						os::fprintf( f, "%d %.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f %d %d\n",
-							octave,
+							static_cast<int>(octave),
 							pre_pts_left.back().x, pre_pts_left.back().y, pre_pts_right.back().x, pre_pts_right.back().y,
 							cur_pts_left.back().x, cur_pts_left.back().y, cur_pts_right.back().x, cur_pts_right.back().y,
-							pi, best_pairing_in_curimg );
+							static_cast<int>(pi), static_cast<int>(best_pairing_in_curimg) );
 					}
 				} // end-if
 			} // end-for

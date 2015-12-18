@@ -479,10 +479,10 @@ bool CStereoOdometryEstimator::saveStateToFile( const string & filename )
 		return false;
 
 	/**/
-	if( this->m_prev_imgpair == NULL )
+	if( !this->m_prev_imgpair )
 		this->m_prev_imgpair = TImagePairDataPtr( new TImagePairData() );
 
-	if( this->m_current_imgpair == NULL )
+	if( !this->m_current_imgpair )
 		this->m_current_imgpair = TImagePairDataPtr( new TImagePairData() );
 
 	const size_t npyr = this->m_prev_imgpair->left.pyr.images.size();
