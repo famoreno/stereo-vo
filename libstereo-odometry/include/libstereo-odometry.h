@@ -140,15 +140,13 @@ namespace rso
 
 	//---------------------------------------------------------------
 	/** @name Main API methods
-		@{
-		/** The main entry point: process a new pair of images and returns the estimated camera pose increment.
-		  *
-		  */
+		@{ */
+		/** The main entry point: process a new pair of images and returns the estimated camera pose increment. */
 		void processNewImagePair(
 			TStereoOdometryRequest & request_data,
 			TStereoOdometryResult & result );
 
-		// this custom method gets info from two different frames and computes the change in pose between them
+		/** this custom method gets info from two different frames and computes the change in pose between them */
 		bool getChangeInPose(
 					const vector_index_pairs_t			& tracked_pairs,
 					const vector<cv::DMatch>			& pre_matches,
@@ -225,30 +223,31 @@ namespace rso
 		struct TStereoOdometryResult
 		{
 			// least square results
-		    CPose3D							outPose;
+			CPose3D							outPose;
 			vector<size_t>					outliers;						//!< outliers in each octave after optimization : includes NMS and residual thresholding (idx of current match in each octave)
 			vector<double>					out_residual;					//!< residual for each observation (tracked match)
 			int								num_it, num_it_final;			//!< number of iterations in the two stages of optimization
 
 			bool							valid;							//!< whether or not the result is valid
-		    VOErrorCode						error_code;						//!< error code for the method
+			VOErrorCode						error_code;						//!< error code for the method
 			size_t							tracked_feats_from_last_KF, 
 											tracked_feats_from_last_frame;	//!< control of number of tracked features (between consecutive frames and between keyframes)
 
 			vector< pair<size_t,size_t> >	detected_feats;					//!< number of detected features in each octave : .first (left image) and .second (right image)
 			vector<size_t>					stereo_matches;					//!< number of stereo matches in each octave : 
 
-		    TStereoOdometryResult() : 
+			TStereoOdometryResult() :
 				outPose(CPose3D()), 
 				outliers(vector<size_t>()),
-				valid(false), 
-				tracked_feats_from_last_KF(0), 
-				tracked_feats_from_last_frame(0), 
-				out_residual(vector<double>()), 
-				num_it(0), 
-				num_it_final(0), 
-				error_code(voecNone), 
-				stereo_matches(0)
+				out_residual(vector<double>()),
+				num_it(0),
+				num_it_final(0),
+				valid(false),
+				error_code(voecNone),
+				tracked_feats_from_last_KF(0),
+				tracked_feats_from_last_frame(0),
+				detected_feats(),
+				stereo_matches()
 				{ }
 		};
 

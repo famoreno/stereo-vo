@@ -136,7 +136,7 @@ void CStereoOdometryEstimator::processNewImagePair(
 		cur_imgpair.right.pyr_feats_kps.resize(nOctaves);
 		cur_imgpair.right.pyr_feats_desc.resize(nOctaves);
 
-		for( size_t octave = 0; octave = nOctaves; ++octave )
+		for( size_t octave = 0; octave < nOctaves; ++octave )
 		{
 			// left
 			cur_imgpair.left.pyr_feats_kps[octave].resize( request_data.precomputed_left_feats->size() );
@@ -162,7 +162,7 @@ void CStereoOdometryEstimator::processNewImagePair(
 
 	// fill the output structure
 	result.detected_feats.resize(nOctaves);
-	for(int i = 0; i < nOctaves; ++i )
+	for(size_t i = 0; i < nOctaves; ++i )
 	{
 		result.detected_feats[i].first	= cur_imgpair.left.pyr_feats_kps[i].size();
 		result.detected_feats[i].second = cur_imgpair.right.pyr_feats_kps[i].size();
@@ -175,9 +175,9 @@ void CStereoOdometryEstimator::processNewImagePair(
 		for( size_t octave = 0; octave < nOctaves; ++octave )
 		{
 			for( vector<cv::KeyPoint>::iterator it = cur_imgpair.left.pyr_feats_kps[octave].begin(); it != cur_imgpair.left.pyr_feats_kps[octave].end(); ++it )
-				mrpt::system::os::fprintf(f, "%d %.2f %.2f %.8f\n", octave, it->pt.x, it->pt.y, it->response );
+				mrpt::system::os::fprintf(f, "%d %.2f %.2f %.8f\n", static_cast<int>(octave), it->pt.x, it->pt.y, it->response );
 
-			cv::FileStorage file( mrpt::format("%s/left_desc_o%02d_%04d.yml",params_general.vo_out_dir.c_str(),octave,m_it_counter).c_str(), cv::FileStorage::WRITE);
+			cv::FileStorage file( mrpt::format("%s/left_desc_o%02d_%04d.yml",params_general.vo_out_dir.c_str(), static_cast<int>(octave),m_it_counter).c_str(), cv::FileStorage::WRITE);
 			file << "leftDescMat" << cur_imgpair.left.pyr_feats_desc[octave];
 			file.release();
 		}
@@ -187,9 +187,9 @@ void CStereoOdometryEstimator::processNewImagePair(
 		for( size_t octave = 0; octave < nOctaves; ++octave )
 		{
 			for( vector<cv::KeyPoint>::iterator it = cur_imgpair.right.pyr_feats_kps[octave].begin(); it != cur_imgpair.right.pyr_feats_kps[octave].end(); ++it )
-				mrpt::system::os::fprintf(f, "%d %.2f %.2f %.8f\n", octave, it->pt.x, it->pt.y, it->response );
+				mrpt::system::os::fprintf(f, "%d %.2f %.2f %.8f\n",  static_cast<int>(octave), it->pt.x, it->pt.y, it->response );
 
-			cv::FileStorage file( mrpt::format("%s/right_desc_o%02d_%04d.yml",params_general.vo_out_dir.c_str(),octave,m_it_counter).c_str(), cv::FileStorage::WRITE);
+			cv::FileStorage file( mrpt::format("%s/right_desc_o%02d_%04d.yml",params_general.vo_out_dir.c_str(), static_cast<int>(octave),m_it_counter).c_str(), cv::FileStorage::WRITE);
 			file << "rightDescMat" << cur_imgpair.right.pyr_feats_desc[octave];
 			file.release();
 		}
@@ -274,7 +274,7 @@ void CStereoOdometryEstimator::processNewImagePair(
 		for( size_t octave = 0; octave < nOctaves; ++octave )
 		{
 			for( vector<cv::DMatch>::iterator it = m_current_imgpair->lr_pairing_data[octave].matches_lr_dm.begin(); it != m_current_imgpair->lr_pairing_data[octave].matches_lr_dm.end(); ++it )
-				mrpt::system::os::fprintf(f, "%d %d %d %.2f\n", octave, it->queryIdx, it->trainIdx, it->distance);
+				mrpt::system::os::fprintf(f, "%d %d %d %.2f\n",  static_cast<int>(octave), it->queryIdx, it->trainIdx, it->distance);
 		}
 		mrpt::system::os::fclose(f);
 	}

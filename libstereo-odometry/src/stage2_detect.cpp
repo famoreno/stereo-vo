@@ -375,7 +375,7 @@ void CStereoOdometryEstimator::m_featlist_to_kpslist( CStereoOdometryEstimator::
 {
 	const size_t nOctaves = img_data.pyr.images.size();		
 	img_data.pyr_feats_kps.resize(nOctaves);
-	for( int octave = 0; octave < nOctaves; ++octave )
+	for( size_t octave = 0; octave < nOctaves; ++octave )
 		m_convert_featureList_to_keypointList( img_data.pyr_feats[octave], img_data.pyr_feats_kps[octave] );
 } // end--m_featlist_to_kpslist
 
