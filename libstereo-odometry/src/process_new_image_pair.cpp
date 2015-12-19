@@ -24,6 +24,13 @@
 
 using namespace rso;
 
+#include <mrpt/version.h>
+#if MRPT_VERSION>=0x130
+using mrpt::obs::CObservationStereoImages;
+#else
+using mrpt::slam::CObservationStereoImages;
+#endif
+
 CStereoOdometryEstimator::TGeneralParams::TGeneralParams() :
 	vo_use_matches_ids(false), vo_save_files(false), vo_debug(false), vo_pause_it(false), vo_out_dir("out") {}
 
@@ -104,7 +111,7 @@ void CStereoOdometryEstimator::processNewImagePair(
 	if( !request_data.repeat && 
 		!m_error_in_tracking )
 	{
-		mrpt::obs::CObservationStereoImages *stObs = const_cast<mrpt::obs::CObservationStereoImages*>(request_data.stereo_imgs.pointer());
+		CObservationStereoImages *stObs = const_cast<CObservationStereoImages*>(request_data.stereo_imgs.pointer());
 		
 		// gui info
 		m_next_gui_info->timestamp = stObs->timestamp;

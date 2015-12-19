@@ -23,7 +23,6 @@
 #include "internal_libstereo-odometry.h"
 
 using namespace rso;
-using namespace mrpt::obs;
 
 CStereoOdometryEstimator::TRectifyParams::TRectifyParams() :
 	nOctaves(3)

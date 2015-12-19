@@ -30,6 +30,14 @@ using namespace std;
 using namespace rso;
 using namespace mrpt::system;
 
+#include <mrpt/version.h>
+#if MRPT_VERSION>=0x130
+using mrpt::obs::CObservationPtr;
+#else
+using mrpt::slam::CObservationPtr;
+#endif
+
+
 int main(int argc, char**argv)
 {
 	try
@@ -181,9 +189,9 @@ int main(int argc, char**argv)
 		else
 		if( run_from_rawlog )
 		{
-			mrpt::obs::CObservationPtr obs = myCam.getNextFrame();
+			CObservationPtr obs = myCam.getNextFrame();
 			if( obs.present() )
-				mrpt::obs::CObservationStereoImagesPtr(obs)->getStereoCameraParams( odom_request.stereo_cam );
+				CObservationStereoImagesPtr(obs)->getStereoCameraParams( odom_request.stereo_cam );
 			else
 				THROW_EXCEPTION("No observations in rawlog");
 
@@ -196,7 +204,7 @@ int main(int argc, char**argv)
 			odom_request.stereo_cam.loadFromConfigFile( "CAMERA", camera_cfgFile );
 		}
 
-		mrpt::obs::CObservationPtr obs;
+		CObservationPtr obs;
 		bool end = false; // Signal for closing if the user command so.
         unsigned int count = 0;
 		while ( !end && (obs=myCam.getNextFrame()).present() )
@@ -206,7 +214,7 @@ int main(int argc, char**argv)
 			CStereoOdometryEstimator::TStereoOdometryResult  odom_result;
 
 			// We need the observation type to be stereo images: (if it's the wrong type, an exception will be raised)
-			odom_request.stereo_imgs = mrpt::obs::CObservationStereoImagesPtr(obs);
+			odom_request.stereo_imgs = CObservationStereoImagesPtr(obs);
 
 			// Estimate visual odometry:
 			stereo_odom_engine.processNewImagePair( odom_request, odom_result );

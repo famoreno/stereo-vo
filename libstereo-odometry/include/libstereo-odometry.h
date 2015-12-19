@@ -60,8 +60,14 @@
 
 #include <mrpt/opengl/CSetOfObjects.h>
 #include <mrpt/synch/CThreadSafeVariable.h>
-#include <mrpt/obs/CObservationStereoImages.h>
 #include <mrpt/gui/CDisplayWindow3D.h>
+
+#include <mrpt/version.h>
+#if MRPT_VERSION>=0x130
+#	include <mrpt/obs/CObservationStereoImages.h>
+#else
+#	include <mrpt/slam/CObservationStereoImages.h>
+#endif
 
 #include <fstream>
 #define SQUARE(_X) _X*_X
@@ -90,6 +96,14 @@ namespace rso
 	using namespace mrpt::math;
 	using namespace mrpt::poses;
 	using namespace mrpt::system;
+
+#if MRPT_VERSION>=0x130
+	using mrpt::obs::CObservationStereoImages;
+	using mrpt::obs::CObservationStereoImagesPtr;
+#else
+	using mrpt::slam::CObservationStereoImages;
+	using mrpt::slam::CObservationStereoImagesPtr;
+#endif
 
 	typedef std::vector<cv::KeyPoint> TKeyPointList;
 	typedef std::vector<cv::DMatch> TDMatchList;
@@ -191,7 +205,7 @@ namespace rso
 		struct TStereoOdometryRequest
 		{
 			/** The input images */
-			mrpt::obs::CObservationStereoImagesPtr  stereo_imgs;
+			CObservationStereoImagesPtr  stereo_imgs;
 
 			/** The camera params */
 			mrpt::utils::TStereoCamera stereo_cam;
