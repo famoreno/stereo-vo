@@ -63,14 +63,6 @@
 #include <mrpt/obs/CObservationStereoImages.h>
 #include <mrpt/gui/CDisplayWindow3D.h>
 
-using namespace mrpt::utils;
-using namespace mrpt::math;
-using namespace mrpt::poses;
-using namespace mrpt::system;
-
-typedef std::vector<cv::KeyPoint> TKeyPointList;
-typedef std::vector<cv::DMatch> TDMatchList;
-
 #include <fstream>
 #define SQUARE(_X) _X*_X
 #define INVALID_IDX -1
@@ -89,40 +81,46 @@ typedef std::vector<cv::DMatch> TDMatchList;
 		cout << _V[k] << ","; \
 	cout << _V[_V.size()-1] << endl;
 
-struct KpRadiusSorter : public std::binary_function<size_t,size_t,bool>
-{
-	const std::vector<double> & m_radius_data;
-	KpRadiusSorter( const std::vector<double> & radius_data ) : m_radius_data( radius_data ) { }
-	bool operator() (size_t k1, size_t k2 ) const {
-		return ( m_radius_data[k1] > m_radius_data[k2] );
-	}
-};
-// from lowest to highest row
-struct KpRowSorter : public std::binary_function<size_t,size_t,bool>
-{
-	const TKeyPointList & m_data;
-	KpRowSorter( const TKeyPointList & data ) : m_data( data ) { }
-	bool operator() (size_t k1, size_t k2 ) const {
-		return (m_data[k1].pt.y < m_data[k2].pt.y);
-	}
-}; // end -- KpRowSorter
-
-
-typedef struct t_change_in_pose_output {
-	mrpt::poses::CPose3D	change_in_pose;
-	std::vector<double>		out_residual;
-	unsigned int			num_gn_iterations;
-	unsigned int			num_gn_final_iterations;
-
-	t_change_in_pose_output() : change_in_pose( mrpt::poses::CPose3D() ), out_residual( std::vector<double>() ), num_gn_iterations( 0 ), num_gn_final_iterations( 0 ) {}
-
-} t_change_in_pose_output;
-
-// Namespace of the Robust Stereo Odometry (RSO) library
+/** Namespace of the Robust Stereo Odometry (RSO) library */
 namespace rso
 {
 	using namespace std;
 	using namespace mrpt::vision;
+	using namespace mrpt::utils;
+	using namespace mrpt::math;
+	using namespace mrpt::poses;
+	using namespace mrpt::system;
+
+	typedef std::vector<cv::KeyPoint> TKeyPointList;
+	typedef std::vector<cv::DMatch> TDMatchList;
+
+	struct KpRadiusSorter : public std::binary_function<size_t,size_t,bool>
+	{
+		const std::vector<double> & m_radius_data;
+		KpRadiusSorter( const std::vector<double> & radius_data ) : m_radius_data( radius_data ) { }
+		bool operator() (size_t k1, size_t k2 ) const {
+			return ( m_radius_data[k1] > m_radius_data[k2] );
+		}
+	};
+	// from lowest to highest row
+	struct KpRowSorter : public std::binary_function<size_t,size_t,bool>
+	{
+		const TKeyPointList & m_data;
+		KpRowSorter( const TKeyPointList & data ) : m_data( data ) { }
+		bool operator() (size_t k1, size_t k2 ) const {
+			return (m_data[k1].pt.y < m_data[k2].pt.y);
+		}
+	}; // end -- KpRowSorter
+
+	typedef struct t_change_in_pose_output {
+		mrpt::poses::CPose3D	change_in_pose;
+		std::vector<double>		out_residual;
+		unsigned int			num_gn_iterations;
+		unsigned int			num_gn_final_iterations;
+
+		t_change_in_pose_output() : change_in_pose( mrpt::poses::CPose3D() ), out_residual( std::vector<double>() ), num_gn_iterations( 0 ), num_gn_final_iterations( 0 ) {}
+
+	} t_change_in_pose_output;
 
 	typedef std::vector<std::pair<size_t,size_t> > vector_index_pairs_t;
 	typedef std::vector<std::pair<mrpt::utils::TPixelCoord,mrpt::utils::TPixelCoord> > vector_pixel_pairs_t;

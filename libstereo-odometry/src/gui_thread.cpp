@@ -277,7 +277,7 @@ void CStereoOdometryEstimator::thread_gui()
 						TColorf(1,1,1),"mono",10, mrpt::opengl::FILL, 2
 						);
 			}
-			/**/
+			/ * */
 			// Text:
 			win->addTextMessage(
 					5,5+1*15,

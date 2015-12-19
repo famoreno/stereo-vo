@@ -212,7 +212,7 @@ int main(int argc, char**argv)
 			stereo_odom_engine.processNewImagePair( odom_request, odom_result );
 
 			// Compute the current position
-            if( odom_result.valid )
+			if( odom_result.valid )
 			{
 				//CPose3D pri_pose(pose);
 
