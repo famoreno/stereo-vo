@@ -10,7 +10,7 @@ before_install:
   - sudo apt-get update -d
 
 install:
-  - sudo apt-get install build-essential pkg-config cmake doxygen libmrpt-dev libopencv-dev
+  - sudo apt-get install build-essential pkg-config cmake doxygen libmrpt-dev libopencv-dev -y
 
 script:
   - bash .travis.sh

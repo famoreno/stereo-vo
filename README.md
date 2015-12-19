@@ -17,7 +17,7 @@ A C++ library for stereo visual odometry.
 
 ### Prerequisites
 
-* CMake
+* CMake (>=2.4.5)
 * [MRPT](https://github.com/MRPT/mrpt) (>=1.3.0 ?)
 * OpenCV (>=2.4.8)
 
@@ -29,5 +29,7 @@ They can be installed in Debian or Ubuntu with:
 
 ### Compiling
 
-...
+As usual with CMake, create an empty build directory, call `cmake` and `make` or build from your favorite IDE (e.g. Visual Studio in Windows). 
+
+
 
