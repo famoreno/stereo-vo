@@ -24,6 +24,7 @@ endif(COMMAND cmake_policy)
 
 INCLUDE_DIRECTORIES(.)
 INCLUDE_DIRECTORIES("${${PROJECT_NAME}_SOURCE_DIR}/include")
+INCLUDE_DIRECTORIES("${OpenCV_INCLUDE_DIRS}")
 
 # Declare the library "libsrba"
 FILE(GLOB LIBHDRS "src/*.h")

@@ -28,7 +28,7 @@
 // opencv
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/version.hpp>
-#if CV_VERSION_EPOCH < 3  // OpenCV < 3.0.0
+#if CV_MAJOR_VERSION < 3  // OpenCV < 3.0.0
 	#include <opencv2/highgui/highgui.hpp>
 	#include <opencv2/imgproc/imgproc.hpp>
 	#include <opencv2/features2d/features2d.hpp>

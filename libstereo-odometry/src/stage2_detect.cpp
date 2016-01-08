@@ -465,7 +465,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 
 			m_profiler.enter(sProfileName.c_str());
 			
-#if CV_VERSION_EPOCH < 3  // OpenCV < 3.0.0
+#if CV_MAJOR_VERSION < 3  // OpenCV < 3.0.0
 			ORB orbDetector( 
 				n_feats_to_extract,			// number of ORB features to extract
 				1.2,						// scale difference
@@ -474,7 +474,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 				0,							// firstLevel
 				2,							// WTA_K
 				ORB::HARRIS_SCORE,			// scoreType
-                31);						// fast threshold
+                31);						// patchSize
 
 			// detect keypoints and descriptors
 			orbDetector( input_im, Mat(), feats_vector, desc_aux );  // all the scales in the same call
@@ -502,7 +502,7 @@ void CStereoOdometryEstimator::stage2_detect_features(
 		else if( params_detect.detect_method == TDetectParams::dmFAST_ORB )
 		{
 			m_profiler.enter(sProfileName.c_str());
-#if CV_VERSION_EPOCH < 3  // OpenCV < 3.0.0
+#if CV_MAJOR_VERSION < 3  // OpenCV < 3.0.0
 			cv::FastFeatureDetector(m_current_fast_th).detect( input_im, feats_vector );	// detect keypoints
 			MRPT_TODO("Perform non-maximal suppression here -- avoids computing ORB descriptors which are going to be rejected")
 			ORB().operator()(input_im, Mat(), feats_vector, desc_aux, true );				// extract descriptors

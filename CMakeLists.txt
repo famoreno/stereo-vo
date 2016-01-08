@@ -40,7 +40,8 @@ SET(BUILD_SHARED_LIBS ${DEFAULT_SHARED_LIBS} CACHE BOOL "Build shared libraries 
 # Minimum version required here: 1.0.0 (for mrpt libs, see www.mrpt.org)
 #SET(MRPT_DONT_USE_DBG_LIBS 1) # For CMake "Debug" builds in Linux
 FIND_PACKAGE(MRPT REQUIRED hwdrivers gui vision obs base opengl)
-FIND_PACKAGE(OpenCV 2.4.8 REQUIRED core highgui features2d video)
+FIND_PACKAGE(OpenCV 2.4.5 REQUIRED core highgui features2d video)
+#FIND_PACKAGE(OpenCV 3.1.0 REQUIRED core highgui features2d video xfeatures2d)
 
 IF (OpenCV_FOUND)
 	MESSAGE(STATUS "OpenCV version found : ${OpenCV_VERSION}")
