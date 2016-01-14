@@ -71,7 +71,7 @@ CStereoOdometryEstimator::TLeastSquaresParams::TLeastSquaresParams() :
 	kernel_param					( 3. ),
 	max_iters						( 100 ),
 	initial_max_iters				( 10 ),
-	max_error_per_obs_px			( 1e-3 ),
+	min_mod_out_vector				( 1e-3 ),
 	std_noise_pixels				( 1. ),
 	max_incr_cost					( 3 ),
 	residual_threshold				( 1. ),

@@ -582,7 +582,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 			double m = 0;
 			for(uint8_t c = 0; c < 6; ++c)	m += (out_newPose(c)*out_newPose(c));
 
-			done = sqrt(m) < params_least_squares.max_error_per_obs_px;
+			done = sqrt(m) < params_least_squares.min_mod_out_vector;
 
 			if( pCost < cCost )
 			{
@@ -684,7 +684,7 @@ void CStereoOdometryEstimator::stage5_optimize(
 			double m = 0;
 			for(uint8_t c = 0; c < 6; ++c)	m += (out_newPose(c)*out_newPose(c));
 
-			done = sqrt(m) < params_least_squares.max_error_per_obs_px;
+			done = sqrt(m) < params_least_squares.min_mod_out_vector;
 
 			if( pCost < cCost )
 			{

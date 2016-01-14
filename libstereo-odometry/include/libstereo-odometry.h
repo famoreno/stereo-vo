@@ -266,28 +266,27 @@ namespace rso
 		struct TGeneralParams
 		{
 			TGeneralParams();
-			bool vo_use_matches_ids;	//!< Indicates if we should track the IDs of the matches through time (Default = false)
-			bool vo_save_files;			//!< Indicates if we should store some information of the system in files as the process goes (Default = false)
-			bool vo_debug;				//!< Indicates if we are debugging the application (auxiliary) (Default = false)
-			bool vo_pause_it;			//!< Indicates if we want to pause the application after each iteration (Default = false)
-			string vo_out_dir;			//!< Sets the output directory for saving debug files (Default = "out")
+			bool vo_use_matches_ids;	//!< (def:false) Set/Unset tracking of the IDs of the matches through time
+			bool vo_save_files;			//!< (def:false) Set/Unset storage of some information of the system in files as the process runs
+			bool vo_debug;				//!< (def:false) Set/Unset showing application debugging info
+			bool vo_pause_it;			//!< (def:false) Set/Unset pausing the application after each iteration
+			string vo_out_dir;			//!< (def:'out') Sets the output directory for saving debug files
 
 			void dumpToConsole()
 			{
-				cout << "	[GENERAL]	Track the IDs of the matches?: ";
-				vo_use_matches_ids ? cout << "Yes" : cout << "No"; cout << endl;
-				cout << "	[GENERAL]	Save information files?: ";
-				vo_save_files ? cout << "Yes" : cout << "No"; cout << endl;
-				cout << "	[GENERAL]	Debug?: ";
-				vo_debug ? cout << "Yes" : cout << "No"; cout << endl;
-				cout << "	[GENERAL]	Pause after each iteration?: ";
-				vo_pause_it ? cout << "Yes" : cout << "No"; cout << endl;
+				cout << "	[GENERAL]	Track the IDs of the matches?: "; vo_use_matches_ids ? cout << "Yes" : cout << "No"; cout << endl;
+				cout << "	[GENERAL]	Save information files?: "; vo_save_files ? cout << "Yes" : cout << "No"; cout << endl;
+				cout << "	[GENERAL]	Debug?: "; vo_debug ? cout << "Yes" : cout << "No"; cout << endl;
+				cout << "	[GENERAL]	Pause after each iteration?: "; vo_pause_it ? cout << "Yes" : cout << "No"; cout << endl;
 				cout << "	[GENERAL]	Output directory: " << vo_out_dir << endl;
 			}
 		};
 
 		struct TInterFrameMatchingParams
 		{
+			MRPT_TODO("Set default values for these parameters and check unused ones")
+			MRPT_TODO("Implement fundamental matrix rejection for IF matches")
+
 			TInterFrameMatchingParams();
 			enum TIFMMethod {ifmDescBF = 0, ifmDescWin, ifmSAD, ifmOpticalFlow };
 			TIFMMethod ifm_method;			//!< Inter-frame matching method
@@ -295,14 +294,14 @@ namespace rso
 			int ifm_win_w, ifm_win_h;		//!< Window size for searching for inter-frame matches
 
 			// SAD
-			uint32_t	sad_max_distance;	//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
-			double		sad_max_ratio;		//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
+			uint32_t	sad_max_distance;	//!< The maximum SAD value to consider a pairing as a potential match (Default: ~200)
+			double		sad_max_ratio;		//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5) (unused by now)
 
 			// ORB
-			double		orb_max_distance;	//!< Maximum allowed Hamming distance between a pair of features to be considered a match
+			double		orb_max_distance;	//!< Maximum allowed Hamming distance between a pair of features to be considered a match (unused by now)
 
 			// General
-			bool		filter_fund_matrix;	//!< Wether or not use fundamental matrix to remove outliers between inter-frame matches	
+			bool		filter_fund_matrix;	//!< Whether or not use fundamental matrix to remove outliers between inter-frame matches (unused by now)
 			
 			void dumpToConsole()
 			{
@@ -317,34 +316,36 @@ namespace rso
 
 			// Parameters for optimize_*()
 			// -------------------------------------
-			bool	use_robust_kernel;
-			double	kernel_param;
-			size_t	max_iters;
-			size_t	initial_max_iters;
-			double	max_error_per_obs_px;	//!< default: 1e-3
-			double	std_noise_pixels;		//!< default: 1, the standard deviation assumed for feature coordinates (this parameter is only needed to scale the uncertainties of reconstructed LMs with unknown locations).
-			size_t	max_incr_cost;
-			double	residual_threshold;
-			size_t	bad_tracking_th;
-			bool	use_previous_pose_as_initial;
-			bool	use_custom_initial_pose;		// use the (input) custom initial pose but do not save it for later use (useful when getChangeInPose is called). This setting has priority over 'use_previous_pose_as_initial'
+			bool	use_robust_kernel;				//!< (def:true) -- Set/Unset using robust kernel for optimization
+			double	kernel_param;					//!< (def:3) -- Robust kernel parameter (pseudo-Huber)
+
+			size_t	max_iters;						//!< (def:100) -- Final maximum number of iterations for the refinement stage
+			size_t	initial_max_iters;				//!< (def:10) -- Maximum number of iterations for the initial stage
+			double	min_mod_out_vector;				//!< (def:0.001) -- Minimum modulus of the step output vector to continue iterating (ending condition)
+			double	std_noise_pixels;				//!< (def:1) -- The standard deviation assumed for feature coordinates (this parameter is only needed to scale the uncertainties of reconstructed LMs with unknown locations). (unused by now)
+			size_t	max_incr_cost;					//!< (def:3) -- Maximum allowed number of times the cost can grow
+			double	residual_threshold;				//!< (def:1) -- Residual threshold for detecting outliers
+			size_t	bad_tracking_th;				//!< (def:5) -- Minimum number of tracked features to yield a tracking error
+			bool	use_previous_pose_as_initial;	//!< (def:true) -- Use the previous computed pose as the initial one for the next frame
+			bool	use_custom_initial_pose;		//!< (def:false) -- Use the (input) custom initial pose but do not save it for later use (useful when getChangeInPose is called). This setting has priority over 'use_previous_pose_as_initial'
 			// -------------------------------------
 
 			void dumpToConsole()
 			{
-				cout << "	[LS]		Use Robust Kernel?: ";
-				use_robust_kernel ? cout << "Yes" : cout << "No"; cout << endl;
-				if( use_robust_kernel )
-					cout << "	[LS]		Robust kernel param: " << kernel_param << endl;
-				cout << "	[LS]		Use previous estimated pose as initial pose?: ";
-				use_previous_pose_as_initial ? cout << "Yes" : cout << "No"; cout << endl;
+				cout << "	[LS]		Use Robust Kernel?: "; use_robust_kernel ? cout << "Yes" : cout << "No"; cout << endl;
+				if( use_robust_kernel ) cout << "	[LS]		Robust kernel param: " << kernel_param << endl;
+				
+				cout << "	[LS]		Use previous estimated pose as initial pose?: "; use_previous_pose_as_initial ? cout << "Yes" : cout << "No"; cout << endl;
+				
 				cout << "	[LS]		Initial maximum number of iterations: " << initial_max_iters << endl;
 				cout << "	[LS]		Final maximum number of iterations: " << max_iters << endl;
-				cout << "	[LS]		Maximum error in pixels for observation: " << max_error_per_obs_px << endl;
-				cout << "	[LS]		STD noise for the feature coordinates: " << std_noise_pixels << endl;
+				cout << "	[LS]		Minimum modulus of the step output vector to continue iterating: " << min_mod_out_vector << endl;
 				cout << "	[LS]		Maximum allowed number of times the cost can grow: " << max_incr_cost << endl;
+
+				cout << "	[LS]		STD noise for the feature coordinates: " << std_noise_pixels << endl;
 				cout << "	[LS]		Residual threshold for detecting outliers: " << residual_threshold << endl;
-				cout << "	[LS]		Bad tracking threshold: " << bad_tracking_th << endl;
+
+				cout << "	[LS]		Minimum number of tracked features to yield a tracking error: " << bad_tracking_th << endl;
 			}
 		};
 
@@ -454,7 +455,7 @@ namespace rso
 			TSMMethod	match_method;				//!< The selected method to perform stereo matching. Compatibility: {smSAD} -> {ORB,KLT,FAST[ER],FAST[ER]+ORB} and {smDescBF,smDescRbR} -> {ORB,FAST[ER]+ORB}
 			
 			// SAD
-			uint32_t	sad_max_distance;				//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
+			uint32_t	sad_max_distance;			//!< The maximum SAD value to consider a pairing as a potential match (Default: ~400)
 			double		sad_max_ratio;				//!< The maximum ratio between the two smallest SAD when searching for pairings (Default: 0.5)
 
 			// ORB
@@ -630,7 +631,7 @@ namespace rso
 				params_least_squares.initial_max_iters      = iniFile.read_int(sections[4], "initial_max_iters", params_least_squares.initial_max_iters, false);
 				params_least_squares.max_iters				= iniFile.read_int(sections[4], "max_iters", params_least_squares.max_iters, false);
 
-				params_least_squares.max_error_per_obs_px	= iniFile.read_double(sections[4], "max_error_per_obs_px", params_least_squares.max_error_per_obs_px, false);
+				params_least_squares.min_mod_out_vector	= iniFile.read_double(sections[4], "min_mod_out_vector", params_least_squares.min_mod_out_vector, false);
 				params_least_squares.max_incr_cost          = iniFile.read_int(sections[4], "max_incr_cost", params_least_squares.max_incr_cost, false);
 				params_least_squares.residual_threshold		= iniFile.read_double(sections[4], "residual_threshold", params_least_squares.residual_threshold, false);
 				params_least_squares.bad_tracking_th        = iniFile.read_int(sections[4], "bad_tracking_th", params_least_squares.bad_tracking_th, false);
