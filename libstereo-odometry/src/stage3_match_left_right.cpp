@@ -251,7 +251,7 @@ void CStereoOdometryEstimator::stage3_match_left_right( CStereoOdometryEstimator
 			{
 				// select current rows (with user-defined tolerance)
 				const size_t idx_feats_L0 = idxL[y]; const size_t idx_feats_L1 = idxL[y+1];
-				const size_t min_row_right = max(size_t(0),size_t(y)-size_t(round(params_lr_match.max_y_diff)));
+				const size_t min_row_right = max(int(0),int(y)-int(round(params_lr_match.max_y_diff)));
 				const size_t max_row_right = min(size_t(imgL.getHeight()-1),size_t(y)+size_t(round(params_lr_match.max_y_diff)));
 				const size_t idx_feats_R0 = idxR[min_row_right]; const size_t idx_feats_R1 = idxR[max_row_right];
 

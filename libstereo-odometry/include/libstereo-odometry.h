@@ -324,7 +324,7 @@ namespace rso
 			double	min_mod_out_vector;				//!< (def:0.001) -- Minimum modulus of the step output vector to continue iterating (ending condition)
 			double	std_noise_pixels;				//!< (def:1) -- The standard deviation assumed for feature coordinates (this parameter is only needed to scale the uncertainties of reconstructed LMs with unknown locations). (unused by now)
 			size_t	max_incr_cost;					//!< (def:3) -- Maximum allowed number of times the cost can grow
-			double	residual_threshold;				//!< (def:1) -- Residual threshold for detecting outliers
+			double	residual_threshold;				//!< (def:10) -- Residual threshold for detecting outliers
 			size_t	bad_tracking_th;				//!< (def:5) -- Minimum number of tracked features to yield a tracking error
 			bool	use_previous_pose_as_initial;	//!< (def:true) -- Use the previous computed pose as the initial one for the next frame
 			bool	use_custom_initial_pose;		//!< (def:false) -- Use the (input) custom initial pose but do not save it for later use (useful when getChangeInPose is called). This setting has priority over 'use_previous_pose_as_initial'

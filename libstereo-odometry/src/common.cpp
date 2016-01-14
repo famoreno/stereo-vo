@@ -74,7 +74,7 @@ CStereoOdometryEstimator::TLeastSquaresParams::TLeastSquaresParams() :
 	min_mod_out_vector				( 1e-3 ),
 	std_noise_pixels				( 1. ),
 	max_incr_cost					( 3 ),
-	residual_threshold				( 1. ),
+	residual_threshold				( 10. ),
 	bad_tracking_th					( 5 ),
 	use_previous_pose_as_initial	( true ),
 	use_custom_initial_pose			( false )
