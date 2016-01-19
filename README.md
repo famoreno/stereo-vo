@@ -1,7 +1,7 @@
 [![Build Status](https://travis-ci.org/famoreno/stereo-vo.svg?branch=master)](https://travis-ci.org/famoreno/stereo-vo)
 
 # stereo-vo
-A C++ library for stereo visual odometry: Robust Stereo visual Odometry (RSO)
+A C++ library for stereo visual odometry: Robust Stereo visual Odometry (RSO). For a complete SLAM system based on this library, check out [srba-stereo-slam](https://github.com/famoreno/srba-stereo-slam).
 
 ## Documentation
 * [Doxygen API reference](http://famoreno.github.io/stereo-vo/)
