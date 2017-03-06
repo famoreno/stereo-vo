@@ -7,7 +7,7 @@ A C++ library for stereo visual odometry: Robust Stereo visual Odometry (RSO). F
 * [Doxygen API reference](http://famoreno.github.io/stereo-vo/)
 * References:
   * Moreno, F.A. and Blanco, J.L. and Gonzalez, J. **A constant-time SLAM back-end in the continuum between global mapping and submapping: application to visual stereo SLAM**, International Journal of Robotics Research, 2016. (In Press)
-  *  Moreno, F.A. **Stereo Visual SLAM for Mobile Robots Navigation**, PhD Thesis, 2015. ([PDF](http://mapir.isa.uma.es/famoreno/papers/thesis/FAMD_thesis.pdf))
+  *  Moreno, F.A. **Stereo Visual SLAM for Mobile Robots Navigation**, PhD Thesis, 2015. ([PDF](http://mapir.uma.es/famoreno/papers/thesis/FAMD_thesis.pdf))
 
 ## Building from sources
 
